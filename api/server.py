@@ -585,7 +585,30 @@ async def websocket_live_endpoint(websocket: WebSocket):
                         runner.on_tick(tick_obj)
 
             accounts = broker.list_accounts()
+            for acc in accounts:
+                perf = broker.get_performance(acc["id"])
+                acc.update(perf)
+                active_for_acc = [
+                    {"strategy": r.strategy_key, "symbol": r.symbol, "timeframe": r.timeframe}
+                    for r in active_runners.values()
+                    if r.account_id == acc["id"] and r.is_running
+                ]
+                acc["active_strategies"] = active_for_acc
+
             positions = broker.get_positions()
+            trades = broker.get_trade_history(limit=50)
+
+            conn = get_db_connection(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT s.*, a.name as account_name 
+            FROM active_strategies s
+            LEFT JOIN demo_accounts a ON s.account_id = a.id
+            ORDER BY s.started_at DESC;
+            """)
+            strat_rows = [dict(r) for r in cursor.fetchall()]
+            conn.close()
+
             coverage = get_historical_coverage(DB_PATH)
 
             msg = {
@@ -594,8 +617,11 @@ async def websocket_live_endpoint(websocket: WebSocket):
                 "tick": get_latest_tick("EURUSD", DB_PATH),
                 "active_streams": list(active_streams.values()),
                 "ticks": ticks_data,
+                "accounts": accounts,
                 "accounts_count": len(accounts),
-                "open_positions": positions[:10],
+                "open_positions": positions,
+                "trades": trades,
+                "active_strategies": strat_rows,
                 "coverage_count": len(coverage),
                 "download_state": download_state
             }

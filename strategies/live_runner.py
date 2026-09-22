@@ -172,7 +172,10 @@ class LiveStrategyRunner:
         elif action == "CLOSE" and current_pos:
             print(f"[{self.strategy_key}] TICK CLOSE SIGNAL on {self.symbol} -> {signal.get('reason')}")
             try:
-                self.broker.close_position(current_pos["id"], close_reason=signal.get("reason", "SIGNAL"))
+                # In FX: BUY closes at BID, SELL closes at ASK
+                side = current_pos.get("side", "BUY")
+                cp = float(tick["bid"]) if side == "BUY" else float(tick["ask"])
+                self.broker.close_position(current_pos["id"], close_reason=signal.get("reason", "SIGNAL"), close_price=cp)
             except Exception as e:
                 print(f"[{self.strategy_key}] Error closing position: {e}")
 
@@ -223,7 +226,10 @@ class LiveStrategyRunner:
         elif action == "CLOSE" and current_pos:
             print(f"[{self.strategy_key}] CLOSE SIGNAL on {self.symbol} -> {signal.get('reason')}")
             try:
-                self.broker.close_position(current_pos["id"], close_reason="SIGNAL")
+                tick = self.broker._latest_ticks.get(self.symbol) or get_latest_tick(self.symbol, self.db_path)
+                side = current_pos.get("side", "BUY")
+                cp = (float(tick["bid"]) if side == "BUY" else float(tick["ask"])) if tick else None
+                self.broker.close_position(current_pos["id"], close_reason="SIGNAL", close_price=cp)
             except Exception as e:
                 print(f"Error closing position: {e}")
 

@@ -49,11 +49,16 @@ document.addEventListener("DOMContentLoaded", () => {
         renderAllSquareCharts();
     });
 
-    // Auto refresh every 5s as fallback
+    // Auto refresh fallback for polling when needed
     setInterval(() => {
         loadMarketStats();
-        loadPositions();
-    }, 5000);
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            loadPositions();
+            loadTrades();
+            loadAccounts();
+            loadActiveStrategies();
+        }
+    }, 2000);
 });
 
 // --- Tab Navigation ---
@@ -125,6 +130,18 @@ function initWebSocket() {
                         drawSquareChart(sym);
                     }
                 }
+            }
+            if (data.open_positions) {
+                renderPositions(data.open_positions);
+            }
+            if (data.trades) {
+                renderTrades(data.trades);
+            }
+            if (data.accounts) {
+                renderAccounts(data.accounts);
+            }
+            if (data.active_strategies) {
+                renderActiveStrategies(data.active_strategies);
             }
             if (data.download_state && data.download_state.is_running) {
                 updateDownloadProgress(data.download_state);
@@ -540,64 +557,74 @@ async function stopLiveStream(symbol) {
 }
 
 // --- Demo Accounts ---
+function renderAccounts(accounts) {
+    if (!accounts) return;
+    const grid = document.getElementById("accounts-grid");
+    const select = document.getElementById("strategy-account-select");
+
+    if (select) {
+        const curVal = select.value;
+        select.innerHTML = accounts.map(a => `<option value="${a.id}">${a.name} ($${parseFloat(a.balance).toLocaleString()})</option>`).join("");
+        if (curVal && accounts.some(a => a.id === curVal)) {
+            select.value = curVal;
+        }
+    }
+
+    if (!grid) return;
+    if (accounts.length === 0) {
+        grid.innerHTML = `<div class="card"><p class="text-muted">Nincs elérhető demó számla.</p></div>`;
+        return;
+    }
+
+    grid.innerHTML = accounts.map(acc => {
+        const pnl = parseFloat(acc.net_pnl || 0);
+        const pnlClass = pnl >= 0 ? "val-green" : "val-red";
+        const pnlSign = pnl >= 0 ? "+" : "";
+        const stratBadge = (acc.active_strategies && acc.active_strategies.length > 0)
+            ? `<div style="margin-top: 4px; font-size: 10px; color: var(--accent-green-bright); font-family: var(--font-mono);">● ${acc.active_strategies.map(s => `${s.strategy} (${s.symbol} ${s.timeframe})`).join(", ")}</div>`
+            : '';
+
+        return `
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">${acc.name}</div>
+                    <span class="ticker-label">ID: ${acc.id} • Tőkeáttétel: 1:${acc.leverage}</span>
+                    ${stratBadge}
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span class="card-tag">${acc.currency}</span>
+                    <button class="btn btn-danger btn-sm" onclick="deleteAccount('${acc.id}', '${acc.name}')" title="Demó számla törlése">Törlés</button>
+                </div>
+            </div>
+            <div class="card-stats">
+                <div class="stat-box">
+                    <div class="stat-label">Egyenleg</div>
+                    <div class="stat-val">$${parseFloat(acc.balance).toLocaleString(undefined, {minimumFractionDigits: 2})}</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Equity (Tőke)</div>
+                    <div class="stat-val val-cyan">$${parseFloat(acc.equity).toLocaleString(undefined, {minimumFractionDigits: 2})}</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Realizált PnL</div>
+                    <div class="stat-val ${pnlClass}">${pnlSign}$${pnl.toLocaleString(undefined, {minimumFractionDigits: 2})}</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Win Rate</div>
+                    <div class="stat-val">${acc.win_rate || 0}% (${acc.total_trades || 0} kötés)</div>
+                </div>
+            </div>
+        </div>
+        `;
+    }).join("");
+}
+
 async function loadAccounts() {
     try {
         const res = await fetch("/api/accounts");
         const accounts = await res.json();
-        const grid = document.getElementById("accounts-grid");
-        const select = document.getElementById("strategy-account-select");
-
-        if (select) {
-            select.innerHTML = accounts.map(a => `<option value="${a.id}">${a.name} ($${a.balance.toLocaleString()})</option>`).join("");
-        }
-
-        if (!grid) return;
-        if (accounts.length === 0) {
-            grid.innerHTML = `<div class="card"><p class="text-muted">Nincs elérhető demó számla.</p></div>`;
-            return;
-        }
-
-        grid.innerHTML = accounts.map(acc => {
-            const pnlClass = acc.net_pnl >= 0 ? "val-green" : "val-red";
-            const pnlSign = acc.net_pnl >= 0 ? "+" : "";
-            const stratBadge = (acc.active_strategies && acc.active_strategies.length > 0)
-                ? `<div style="margin-top: 4px; font-size: 10px; color: var(--accent-green-bright); font-family: var(--font-mono);">● ${acc.active_strategies.map(s => `${s.strategy} (${s.symbol} ${s.timeframe})`).join(", ")}</div>`
-                : '';
-
-            return `
-            <div class="card">
-                <div class="card-header">
-                    <div>
-                        <div class="card-title">${acc.name}</div>
-                        <span class="ticker-label">ID: ${acc.id} • Tőkeáttétel: 1:${acc.leverage}</span>
-                        ${stratBadge}
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <span class="card-tag">${acc.currency}</span>
-                        <button class="btn btn-danger btn-sm" onclick="deleteAccount('${acc.id}', '${acc.name}')" title="Demó számla törlése">Törlés</button>
-                    </div>
-                </div>
-                <div class="card-stats">
-                    <div class="stat-box">
-                        <div class="stat-label">Egyenleg</div>
-                        <div class="stat-val">$${parseFloat(acc.balance).toLocaleString(undefined, {minimumFractionDigits: 2})}</div>
-                    </div>
-                    <div class="stat-box">
-                        <div class="stat-label">Equity (Tőke)</div>
-                        <div class="stat-val val-cyan">$${parseFloat(acc.equity).toLocaleString(undefined, {minimumFractionDigits: 2})}</div>
-                    </div>
-                    <div class="stat-box">
-                        <div class="stat-label">Realizált PnL</div>
-                        <div class="stat-val ${pnlClass}">${pnlSign}$${parseFloat(acc.net_pnl || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</div>
-                    </div>
-                    <div class="stat-box">
-                        <div class="stat-label">Win Rate</div>
-                        <div class="stat-val">${acc.win_rate || 0}% (${acc.total_trades || 0} kötés)</div>
-                    </div>
-                </div>
-            </div>
-            `;
-        }).join("");
+        renderAccounts(accounts);
     } catch (e) {
         console.error("Error loading accounts:", e);
     }
@@ -675,45 +702,50 @@ async function createNewAccount(e) {
 }
 
 // --- Active Strategies ---
+function renderActiveStrategies(strategies) {
+    if (!strategies) return;
+    const tbody = document.getElementById("active-strategies-body");
+    if (!tbody) return;
+
+    if (strategies.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" class="text-muted" style="text-align:center;">Jelenleg nem fut aktív stratégia demó számlán.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = strategies.map(s => {
+        const isRunning = s.status === "RUNNING";
+        const badge = isRunning 
+            ? `<span class="status-badge status-live"><span class="pulsing-dot"></span> AKTÍV</span>` 
+            : `<span class="status-badge" style="background:var(--accent-red-bg); color:var(--accent-red-bright); border-color:#991b1b">LEÁLLÍTVA</span>`;
+        
+        const actionBtns = `
+            <div style="display: flex; gap: 6px; align-items: center;">
+                ${isRunning
+                    ? `<button class="btn btn-secondary btn-sm" onclick="stopStrategy('${s.strategy_id}')">Leállítás</button>`
+                    : `<button class="btn btn-primary btn-sm" onclick="restartStrategy('${s.strategy_id}', '${s.account_id}', '${s.symbol}', '${s.timeframe}')">Indítás</button>`}
+                <button class="btn btn-danger btn-sm" onclick="deleteStrategy('${s.strategy_id}', '${s.strategy_name}')" title="Stratégia végleges törlése">Törlés</button>
+            </div>
+        `;
+
+        return `
+        <tr>
+            <td><strong>${s.strategy_name}</strong></td>
+            <td>${s.account_name || s.account_id}</td>
+            <td><span class="card-tag">${s.symbol}</span></td>
+            <td>${s.timeframe}</td>
+            <td>${badge}</td>
+            <td>${s.started_at}</td>
+            <td>${actionBtns}</td>
+        </tr>
+        `;
+    }).join("");
+}
+
 async function loadActiveStrategies() {
     try {
         const res = await fetch("/api/active-strategies");
         const strategies = await res.json();
-        const tbody = document.getElementById("active-strategies-body");
-        if (!tbody) return;
-
-        if (strategies.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="7" class="text-muted" style="text-align:center;">Jelenleg nem fut aktív stratégia demó számlán.</td></tr>`;
-            return;
-        }
-
-        tbody.innerHTML = strategies.map(s => {
-            const isRunning = s.status === "RUNNING";
-            const badge = isRunning 
-                ? `<span class="status-badge status-live"><span class="pulsing-dot"></span> AKTÍV</span>` 
-                : `<span class="status-badge" style="background:var(--accent-red-bg); color:var(--accent-red-bright); border-color:#991b1b">LEÁLLÍTVA</span>`;
-            
-            const actionBtns = `
-                <div style="display: flex; gap: 6px; align-items: center;">
-                    ${isRunning
-                        ? `<button class="btn btn-secondary btn-sm" onclick="stopStrategy('${s.strategy_id}')">Leállítás</button>`
-                        : `<button class="btn btn-primary btn-sm" onclick="restartStrategy('${s.strategy_id}', '${s.account_id}', '${s.symbol}', '${s.timeframe}')">Indítás</button>`}
-                    <button class="btn btn-danger btn-sm" onclick="deleteStrategy('${s.strategy_id}', '${s.strategy_name}')" title="Stratégia végleges törlése">Törlés</button>
-                </div>
-            `;
-
-            return `
-            <tr>
-                <td><strong>${s.strategy_name}</strong></td>
-                <td>${s.account_name || s.account_id}</td>
-                <td><span class="card-tag">${s.symbol}</span></td>
-                <td>${s.timeframe}</td>
-                <td>${badge}</td>
-                <td>${s.started_at}</td>
-                <td>${actionBtns}</td>
-            </tr>
-            `;
-        }).join("");
+        renderActiveStrategies(strategies);
     } catch (e) {
         console.error("Error loading active strategies:", e);
     }
@@ -809,39 +841,47 @@ async function restartStrategy(strategyId, accountId, symbol, timeframe) {
 }
 
 // --- Positions & Trades ---
+function renderPositions(positions) {
+    if (!positions) return;
+    const tbody = document.getElementById("positions-body");
+    if (!tbody) return;
+
+    if (positions.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" class="text-muted" style="text-align:center;">Nincs nyitott pozíció.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = positions.map(pos => {
+        const spec = getSymbolSpec(pos.symbol);
+        const sideClass = pos.side === "BUY" ? "val-green" : "val-red";
+        const pnl = parseFloat(pos.unrealized_pnl || 0);
+        const pnlClass = pnl >= 0 ? "val-green" : "val-red";
+        const pnlSign = pnl >= 0 ? "+" : "";
+        const openPrice = parseFloat(pos.open_price);
+        const currPrice = parseFloat(pos.current_price || pos.open_price);
+        return `
+        <tr>
+            <td><span class="card-tag">${pos.symbol}</span></td>
+            <td><strong class="${sideClass}">${pos.side}</strong></td>
+            <td>${pos.volume} lot</td>
+            <td>${openPrice.toFixed(spec.digits)}</td>
+            <td>${currPrice.toFixed(spec.digits)}</td>
+            <td>${pos.stop_loss ? parseFloat(pos.stop_loss).toFixed(spec.digits) : '-'}</td>
+            <td>${pos.take_profit ? parseFloat(pos.take_profit).toFixed(spec.digits) : '-'}</td>
+            <td><strong class="${pnlClass}">${pnlSign}$${pnl.toFixed(2)}</strong></td>
+            <td>
+                <button class="btn btn-danger btn-sm" onclick="closePosition('${pos.id}')">Zárás</button>
+            </td>
+        </tr>
+        `;
+    }).join("");
+}
+
 async function loadPositions() {
     try {
         const res = await fetch("/api/positions");
         const positions = await res.json();
-        const tbody = document.getElementById("positions-body");
-        if (!tbody) return;
-
-        if (positions.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="9" class="text-muted" style="text-align:center;">Nincs nyitott pozíció.</td></tr>`;
-            return;
-        }
-
-        tbody.innerHTML = positions.map(pos => {
-            const spec = getSymbolSpec(pos.symbol);
-            const sideClass = pos.side === "BUY" ? "val-green" : "val-red";
-            const pnlClass = pos.unrealized_pnl >= 0 ? "val-green" : "val-red";
-            const pnlSign = pos.unrealized_pnl >= 0 ? "+" : "";
-            return `
-            <tr>
-                <td><span class="card-tag">${pos.symbol}</span></td>
-                <td><strong class="${sideClass}">${pos.side}</strong></td>
-                <td>${pos.volume} lot</td>
-                <td>${pos.open_price.toFixed(spec.digits)}</td>
-                <td>${pos.current_price.toFixed(spec.digits)}</td>
-                <td>${pos.stop_loss ? pos.stop_loss.toFixed(spec.digits) : '-'}</td>
-                <td>${pos.take_profit ? pos.take_profit.toFixed(spec.digits) : '-'}</td>
-                <td><strong class="${pnlClass}">${pnlSign}$${pos.unrealized_pnl.toFixed(2)}</strong></td>
-                <td>
-                    <button class="btn btn-danger btn-sm" onclick="closePosition('${pos.id}')">Zárás</button>
-                </td>
-            </tr>
-            `;
-        }).join("");
+        renderPositions(positions);
     } catch (e) {
         console.error("Error loading positions:", e);
     }
@@ -860,37 +900,45 @@ async function closePosition(positionId) {
     }
 }
 
+function renderTrades(trades) {
+    if (!trades) return;
+    const tbody = document.getElementById("trades-body");
+    if (!tbody) return;
+
+    if (trades.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="text-muted" style="text-align:center;">Nincs korábbi lezárt kötés.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = trades.map(t => {
+        const spec = getSymbolSpec(t.symbol);
+        const sideClass = t.side === "BUY" ? "val-green" : "val-red";
+        const pnl = parseFloat(t.pnl || 0);
+        const pnlClass = pnl >= 0 ? "val-green" : "val-red";
+        const pnlSign = pnl >= 0 ? "+" : "";
+        const closeTime = t.close_time ? new Date(t.close_time).toLocaleTimeString() : '-';
+        const openPrice = parseFloat(t.open_price);
+        const closePrice = parseFloat(t.close_price);
+        return `
+        <tr>
+            <td><span class="card-tag">${t.symbol}</span></td>
+            <td><strong class="${sideClass}">${t.side}</strong></td>
+            <td>${t.volume} lot</td>
+            <td>${openPrice.toFixed(spec.digits)}</td>
+            <td>${closePrice.toFixed(spec.digits)}</td>
+            <td><strong class="${pnlClass}">${pnlSign}$${pnl.toFixed(2)}</strong></td>
+            <td><span class="ticker-label">${t.close_reason || 'MANUAL'}</span></td>
+            <td>${closeTime}</td>
+        </tr>
+        `;
+    }).join("");
+}
+
 async function loadTrades() {
     try {
         const res = await fetch("/api/trades");
         const trades = await res.json();
-        const tbody = document.getElementById("trades-body");
-        if (!tbody) return;
-
-        if (trades.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="8" class="text-muted" style="text-align:center;">Nincs korábbi lezárt kötés.</td></tr>`;
-            return;
-        }
-
-        tbody.innerHTML = trades.map(t => {
-            const spec = getSymbolSpec(t.symbol);
-            const sideClass = t.side === "BUY" ? "val-green" : "val-red";
-            const pnlClass = t.pnl >= 0 ? "val-green" : "val-red";
-            const pnlSign = t.pnl >= 0 ? "+" : "";
-            const closeTime = new Date(t.close_time).toLocaleTimeString();
-            return `
-            <tr>
-                <td><span class="card-tag">${t.symbol}</span></td>
-                <td><strong class="${sideClass}">${t.side}</strong></td>
-                <td>${t.volume} lot</td>
-                <td>${t.open_price.toFixed(spec.digits)}</td>
-                <td>${t.close_price.toFixed(spec.digits)}</td>
-                <td><strong class="${pnlClass}">${pnlSign}$${t.pnl.toFixed(2)}</strong></td>
-                <td><span class="ticker-label">${t.close_reason || 'MANUAL'}</span></td>
-                <td>${closeTime}</td>
-            </tr>
-            `;
-        }).join("");
+        renderTrades(trades);
     } catch (e) {
         console.error("Error loading trades:", e);
     }

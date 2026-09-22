@@ -181,10 +181,12 @@ class PaperBroker:
         contract_size = get_contract_size(symbol)
 
         if close_price is None:
-            tick = get_latest_tick(symbol, self.db_path)
+            tick = self._latest_ticks.get(symbol) or get_latest_tick(symbol, self.db_path)
             if tick:
                 # BUY closes at BID, SELL closes at ASK
                 close_price = float(tick["bid"]) if side == "BUY" else float(tick["ask"])
+            elif pos.get("current_price") is not None and float(pos["current_price"]) > 0:
+                close_price = float(pos["current_price"])
             else:
                 close_price = open_price
 
@@ -194,7 +196,8 @@ class PaperBroker:
         else:
             pnl = (open_price - close_price) * volume * contract_size
 
-        now_ts = int(time.time() * 1000)
+        tick_now = self._latest_ticks.get(symbol)
+        now_ts = int((tick_now.get("timestamp") if tick_now else None) or (time.time() * 1000))
         trade_id = str(uuid.uuid4())
 
         # 1. Insert trade history
