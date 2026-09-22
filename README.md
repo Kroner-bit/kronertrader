@@ -54,6 +54,7 @@
   - Pre-built reference strategies:
     - `ema_cross` — Exponential Moving Average Crossover.
     - `rsi_reversal` — Relative Strength Index Mean Reversion.
+    - `timer_scalper` — High-Frequency 10s Long / 5s Close Timer Scalper.
   - Dynamic strategy loader (`strategies/loader.py`).
 
 ---
@@ -98,6 +99,7 @@ KronerTrader/
 │   ├── base_strategy.py     # Base abstract strategy class
 │   ├── ema_cross.py         # EMA Cross strategy implementation
 │   ├── rsi_reversal.py      # RSI Reversal strategy implementation
+│   ├── timer_scalper.py     # 10s Long / 5s Close timer strategy
 │   ├── live_runner.py       # Tick/bar loop runner for forward tests
 │   ├── loader.py            # Dynamic strategy registry
 │   └── run_strategy.py      # Standalone forward test CLI

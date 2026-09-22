@@ -11,10 +11,12 @@ if PROJECT_ROOT not in sys.path:
 from strategies.base_strategy import BaseTradingStrategy
 from strategies.ema_cross import EmaCrossStrategy
 from strategies.rsi_reversal import RsiReversalStrategy
+from strategies.timer_scalper import TimerScalperStrategy
 
 REGISTRY: Dict[str, Type[BaseTradingStrategy]] = {
     "ema_cross": EmaCrossStrategy,
-    "rsi_reversal": RsiReversalStrategy
+    "rsi_reversal": RsiReversalStrategy,
+    "timer_scalper": TimerScalperStrategy
 }
 
 def get_available_strategies() -> List[Dict[str, Any]]:

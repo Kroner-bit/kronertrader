@@ -28,6 +28,7 @@ def get_contract_size(symbol: str) -> float:
 class PaperBroker:
     def __init__(self, db_path: str = DB_PATH):
         self.db_path = db_path
+        self._latest_ticks: Dict[str, Dict[str, Any]] = {}
 
     def get_account(self, account_id: str) -> Optional[Dict[str, Any]]:
         conn = get_db_connection(self.db_path)
@@ -105,13 +106,13 @@ class PaperBroker:
         if not account:
             raise ValueError(f"Account '{account_id}' not found")
 
-        tick = get_latest_tick(symbol, self.db_path)
+        tick = self._latest_ticks.get(symbol) or get_latest_tick(symbol, self.db_path)
         if not tick:
             raise ValueError(f"No market data available for '{symbol}' to execute order")
 
         # In FX: BUY enters at ASK, SELL enters at BID
         open_price = float(tick["ask"]) if side == "BUY" else float(tick["bid"])
-        now_ts = int(time.time() * 1000)
+        now_ts = int(tick.get("timestamp") or (time.time() * 1000))
 
         contract_size = get_contract_size(symbol)
         position_value = volume * contract_size * open_price
@@ -257,6 +258,7 @@ class PaperBroker:
         - Updates account equity.
         """
         symbol = tick["symbol"].upper()
+        self._latest_ticks[symbol] = tick
         bid = float(tick["bid"])
         ask = float(tick["ask"])
         contract_size = get_contract_size(symbol)

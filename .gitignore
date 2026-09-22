@@ -31,3 +31,6 @@ reports/*.html
 # IDE
 .idea/
 .vscode/
+
+# Scratch
+scratch/

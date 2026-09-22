@@ -41,6 +41,7 @@ class LiveStrategyRunner:
         self.is_running = False
         self._thread: Optional[threading.Thread] = None
         self.last_evaluated_candle_time: Optional[pd.Timestamp] = None
+        self.state: Dict[str, Any] = {}
 
         # Rolling candle buffer
         self.candles = pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
@@ -86,7 +87,11 @@ class LiveStrategyRunner:
         # 1. Update PaperBroker open positions with live tick for SL/TP and unrealized PnL
         self.broker.on_tick(tick)
 
-        # 2. Update rolling candle aggregator (1m interval = 60000ms)
+        # 2. Check for tick-level strategy evaluation (e.g. 10s Long / 5s Close)
+        if getattr(self.strategy_cls, "is_tick_strategy", False):
+            self.evaluate_tick(tick)
+
+        # 3. Update rolling candle aggregator (1m interval = 60000ms)
         interval_ms = 60000 if self.timeframe == "1m" else 300000 # 5m = 300000ms
         bar_start = (ts_ms // interval_ms) * interval_ms
 
@@ -115,13 +120,72 @@ class LiveStrategyRunner:
             # Evaluate strategy on new completed bar
             self.evaluate()
 
+    def evaluate_tick(self, tick: Dict[str, Any]):
+        """Evaluates high-frequency or sub-minute tick strategies directly on each incoming tick."""
+        positions = self.broker.get_positions(account_id=self.account_id)
+        current_pos = next(
+            (p for p in positions if p.get("symbol") == self.symbol and (p.get("strategy_id") == self.strategy_key or not p.get("strategy_id"))),
+            None
+        )
+
+        signal = self.strategy_cls.evaluate_tick_signal(
+            tick=tick,
+            current_position=current_pos,
+            state=self.state
+        )
+        action = signal.get("action", "HOLD")
+
+        if action == "BUY":
+            if current_pos:
+                return
+            print(f"[{self.strategy_key}] TICK BUY SIGNAL on {self.symbol} -> {signal.get('reason')}")
+            try:
+                self.broker.place_order(
+                    account_id=self.account_id,
+                    symbol=self.symbol,
+                    side="BUY",
+                    volume=self.volume,
+                    stop_loss=signal.get("stop_loss"),
+                    take_profit=signal.get("take_profit"),
+                    strategy_id=self.strategy_key
+                )
+            except Exception as e:
+                print(f"[{self.strategy_key}] Error placing buy order: {e}")
+
+        elif action == "SELL":
+            if current_pos:
+                return
+            print(f"[{self.strategy_key}] TICK SELL SIGNAL on {self.symbol} -> {signal.get('reason')}")
+            try:
+                self.broker.place_order(
+                    account_id=self.account_id,
+                    symbol=self.symbol,
+                    side="SELL",
+                    volume=self.volume,
+                    stop_loss=signal.get("stop_loss"),
+                    take_profit=signal.get("take_profit"),
+                    strategy_id=self.strategy_key
+                )
+            except Exception as e:
+                print(f"[{self.strategy_key}] Error placing sell order: {e}")
+
+        elif action == "CLOSE" and current_pos:
+            print(f"[{self.strategy_key}] TICK CLOSE SIGNAL on {self.symbol} -> {signal.get('reason')}")
+            try:
+                self.broker.close_position(current_pos["id"], close_reason=signal.get("reason", "SIGNAL"))
+            except Exception as e:
+                print(f"[{self.strategy_key}] Error closing position: {e}")
+
     def evaluate(self):
         if len(self.candles) < 20:
             return
 
         # Check existing open position for this strategy and account
         positions = self.broker.get_positions(account_id=self.account_id)
-        current_pos = next((p for p in positions if p.get("symbol") == self.symbol), None)
+        current_pos = next(
+            (p for p in positions if p.get("symbol") == self.symbol and (p.get("strategy_id") == self.strategy_key or not p.get("strategy_id"))),
+            None
+        )
 
         signal = self.strategy_cls.evaluate_live_signal(self.candles, current_pos)
         action = signal.get("action", "HOLD")
@@ -167,6 +231,7 @@ class LiveStrategyRunner:
         if self.is_running:
             return
         self.is_running = True
+        self.state.clear()
         self.load_initial_candles()
         self._sync_status_to_db("RUNNING")
         print(f"Started strategy '{self.strategy_cls.name}' on account '{self.account_id}' for {self.symbol} ({self.timeframe})")

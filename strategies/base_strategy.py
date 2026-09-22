@@ -35,6 +35,7 @@ class BaseTradingStrategy:
     default_timeframe: str = "1m"
     default_symbol: str = "EURUSD"
     default_volume: float = 0.1
+    is_tick_strategy: bool = False
 
     @classmethod
     def get_backtest_class(cls) -> type:
@@ -57,3 +58,22 @@ class BaseTradingStrategy:
         }
         """
         raise NotImplementedError
+
+    @classmethod
+    def evaluate_tick_signal(
+        cls,
+        tick: Dict[str, Any],
+        current_position: Optional[Dict[str, Any]],
+        state: Dict[str, Any],
+        params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Evaluates tick-level signals for high-frequency or time-based strategies:
+        {
+            'action': 'BUY' | 'SELL' | 'CLOSE' | 'HOLD',
+            'stop_loss': Optional[float],
+            'take_profit': Optional[float],
+            'reason': str
+        }
+        """
+        return {"action": "HOLD"}
