@@ -67,11 +67,13 @@ def download_historical_ticks(
     to_date: str = "2026-03-01",
     chunk_days: int = 7,
     db_path: str = DB_PATH,
-    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    cancel_check: Optional[Callable[[], bool]] = None,
+    proc_holder: Optional[List[Any]] = None
 ) -> int:
     """
     Downloads historical ticks in manageable day chunks using dukascopy-node
-    and imports them immediately into SQLite.
+    and imports them immediately into SQLite. Supports early cancellation.
     """
     start_dt = datetime.strptime(from_date, "%Y-%m-%d")
     end_dt = datetime.strptime(to_date, "%Y-%m-%d")
@@ -89,6 +91,10 @@ def download_historical_ticks(
     print(f"=== Starting Dukascopy download for {symbol.upper()} from {from_date} to {to_date} ({total_days} days) ===")
 
     while current_start < end_dt:
+        if cancel_check and cancel_check():
+            print(f"[DukascopyDownloader] Cancellation detected before chunk. Halting.")
+            break
+
         current_end = min(current_start + timedelta(days=chunk_days), end_dt)
         chunk_from_str = current_start.strftime("%Y-%m-%d")
         chunk_to_str = current_end.strftime("%Y-%m-%d")
@@ -113,17 +119,34 @@ def download_historical_ticks(
         ]
 
         try:
-            res = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
                 shell=True,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
-                errors="replace",
-                check=False
+                errors="replace"
             )
-            if res.returncode != 0:
-                print(f"Warning: dukascopy-node exit code {res.returncode}: {res.stderr[:200]}")
+            if proc_holder is not None:
+                proc_holder[0] = proc
+
+            while proc.poll() is None:
+                if cancel_check and cancel_check():
+                    print(f"[DukascopyDownloader] Cancellation detected during chunk execution. Killing process.")
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    break
+                time.sleep(0.3)
+
+            if proc_holder is not None:
+                proc_holder[0] = None
+
+            if cancel_check and cancel_check():
+                break
+
         except Exception as e:
             print(f"Error running dukascopy-node: {e}")
 

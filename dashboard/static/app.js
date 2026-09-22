@@ -1093,6 +1093,7 @@ function updateDownloadProgress(state) {
     const badge = document.getElementById("auto-download-badge");
     const badgeText = document.getElementById("auto-download-text");
     const badgeDot = document.getElementById("auto-download-dot");
+    const headerStopBtn = document.getElementById("header-stop-btn");
 
     if (state.is_running) {
         if (downloadCompleteTimeout) {
@@ -1106,7 +1107,7 @@ function updateDownloadProgress(state) {
         if (pct) pct.textContent = `${state.percent}%`;
         if (msg) msg.textContent = state.message;
 
-        // Show top header badge
+        // Show top header badge with stop button
         if (badge && badgeText) {
             badge.style.display = "inline-flex";
             badge.style.background = "rgba(59, 130, 246, 0.15)";
@@ -1115,6 +1116,9 @@ function updateDownloadProgress(state) {
             if (badgeDot) {
                 badgeDot.style.background = "#3b82f6";
                 badgeDot.style.display = "inline-block";
+            }
+            if (headerStopBtn) {
+                headerStopBtn.style.display = "inline-block";
             }
             const sym = state.symbol ? `[${state.symbol}] ` : "";
             const prefix = state.auto ? "1 ÉVES LETÖLTÉS" : "LETÖLTÉS";
@@ -1126,6 +1130,8 @@ function updateDownloadProgress(state) {
         if (bar) bar.style.width = "100%";
         if (pct) pct.textContent = "100%";
         if (msg) msg.textContent = state.message;
+
+        if (headerStopBtn) headerStopBtn.style.display = "none";
 
         if (badge && badgeText) {
             badge.style.display = "inline-flex";
@@ -1148,10 +1154,40 @@ function updateDownloadProgress(state) {
                 downloadCompleteTimeout = null;
             }, 8000);
         }
+    } else if (state.message && (state.message.includes("leállítva") || state.message.includes("megszakítva") || state.message.includes("cancelled"))) {
+        // User cancelled / stopped
+        if (box) box.style.display = "block";
+        if (bar) bar.style.width = "0%";
+        if (pct) pct.textContent = "0%";
+        if (msg) msg.textContent = state.message;
+
+        if (headerStopBtn) headerStopBtn.style.display = "none";
+
+        if (badge && badgeText) {
+            badge.style.display = "inline-flex";
+            badge.style.background = "rgba(245, 158, 11, 0.15)";
+            badge.style.borderColor = "#f59e0b";
+            badge.style.color = "#fbbf24";
+            if (badgeDot) badgeDot.style.background = "#f59e0b";
+            const sym = state.symbol ? `[${state.symbol}] ` : "";
+            badgeText.textContent = `✕ ${sym}LETÖLTÉS LEÁLLÍTVA`;
+        }
+
+        if (!downloadCompleteTimeout) {
+            downloadCompleteTimeout = setTimeout(() => {
+                if (badge) badge.style.display = "none";
+                if (box) box.style.display = "none";
+                loadMarketStats();
+                loadHistoricalCoverage();
+                downloadCompleteTimeout = null;
+            }, 5000);
+        }
     } else if (state.message && state.message.toLowerCase().includes("hiba")) {
         // Error state
         if (box) box.style.display = "block";
         if (msg) msg.textContent = state.message;
+
+        if (headerStopBtn) headerStopBtn.style.display = "none";
 
         if (badge && badgeText) {
             badge.style.display = "inline-flex";
@@ -1168,6 +1204,49 @@ function updateDownloadProgress(state) {
                 if (box) box.style.display = "none";
                 downloadCompleteTimeout = null;
             }, 8000);
+        }
+    }
+}
+
+async function stopHistoricalDownload(e) {
+    if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    const btnHeader = document.getElementById("header-stop-btn");
+    const btnTab = document.getElementById("tab-stop-btn");
+    if (btnHeader) {
+        btnHeader.disabled = true;
+        btnHeader.textContent = "Leállítás...";
+    }
+    if (btnTab) {
+        btnTab.disabled = true;
+        btnTab.textContent = "Leállítás...";
+    }
+
+    try {
+        const res = await fetch("/api/market/download/stop", {
+            method: "POST"
+        });
+        const data = await res.json();
+        console.log("Download stopped:", data);
+        updateDownloadProgress({
+            is_running: false,
+            percent: 0.0,
+            message: data.message || "Letöltés leállítva a felhasználó által."
+        });
+        loadMarketStats();
+        loadHistoricalCoverage();
+    } catch (err) {
+        console.error("Error stopping download:", err);
+    } finally {
+        if (btnHeader) {
+            btnHeader.disabled = false;
+            btnHeader.textContent = "✕ Leállítás";
+        }
+        if (btnTab) {
+            btnTab.disabled = false;
+            btnTab.textContent = "✕ Letöltés Leállítása";
         }
     }
 }

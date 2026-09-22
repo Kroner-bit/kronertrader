@@ -135,6 +135,9 @@ def get_or_fetch_initial_tick(symbol: str) -> Dict[str, Any]:
 auto_download_queue: queue.Queue = queue.Queue()
 queued_auto_symbols: set = set()
 completed_one_year_symbols: set = set()
+user_stopped_symbols: set = set()
+download_cancel_event: threading.Event = threading.Event()
+active_download_proc: List[Any] = [None]
 downloader_worker_thread: Optional[threading.Thread] = None
 
 # Background download state
@@ -155,6 +158,9 @@ def _downloader_worker():
         except queue.Empty:
             continue
 
+        download_cancel_event.clear()
+        active_download_proc[0] = None
+
         if isinstance(item, dict):
             sym = item.get("symbol", "").upper().strip()
             from_date = item.get("from_date")
@@ -169,7 +175,7 @@ def _downloader_worker():
             to_date = now.strftime("%Y-%m-%d")
             from_date = (now - timedelta(days=365)).strftime("%Y-%m-%d")
 
-        if not sym:
+        if not sym or download_cancel_event.is_set():
             auto_download_queue.task_done()
             continue
 
@@ -183,6 +189,8 @@ def _downloader_worker():
             download_state["message"] = f"Automatikus 1 éves letöltés indítása ({sym}): {from_date} - {to_date}..."
 
             def on_progress(p):
+                if download_cancel_event.is_set():
+                    return
                 download_state["percent"] = round(p["percent"], 1)
                 download_state["total_ticks"] = p["total_ticks"]
                 download_state["message"] = (
@@ -196,14 +204,23 @@ def _downloader_worker():
                 to_date=to_date,
                 chunk_days=chunk_days,
                 db_path=DB_PATH,
-                progress_callback=on_progress
+                progress_callback=on_progress,
+                cancel_check=lambda: download_cancel_event.is_set(),
+                proc_holder=active_download_proc
             )
-            download_state["percent"] = 100.0
-            download_state["is_running"] = False
-            download_state["total_ticks"] = total
-            download_state["message"] = f"✓ {sym} 1 éves historikus adat sikeresen letöltve ({total:,} tick)!"
-            completed_one_year_symbols.add(sym)
-            print(f"[AutoDownloader] Finished download for {sym}: {total:,} ticks stored.")
+
+            if download_cancel_event.is_set():
+                download_state["is_running"] = False
+                download_state["percent"] = 0.0
+                download_state["message"] = f"Letöltés leállítva a felhasználó által ({sym})."
+                print(f"[AutoDownloader] Download cancelled for {sym}.")
+            else:
+                download_state["percent"] = 100.0
+                download_state["is_running"] = False
+                download_state["total_ticks"] = total
+                download_state["message"] = f"✓ {sym} 1 éves historikus adat sikeresen letöltve ({total:,} tick)!"
+                completed_one_year_symbols.add(sym)
+                print(f"[AutoDownloader] Finished download for {sym}: {total:,} ticks stored.")
         except Exception as e:
             print(f"[AutoDownloader] Error downloading {sym}: {e}")
             download_state["is_running"] = False
@@ -231,6 +248,8 @@ def trigger_auto_download_if_needed(symbol: str):
     if not s:
         return
     if s in completed_one_year_symbols:
+        return
+    if s in user_stopped_symbols:
         return
     if s in queued_auto_symbols:
         return
@@ -549,6 +568,7 @@ async def trigger_download(req: DownloadRequest):
         raise HTTPException(status_code=400, detail="Már fut egy letöltési folyamat a háttérben.")
 
     s = req.symbol.upper().strip()
+    user_stopped_symbols.discard(s)
     auto_download_queue.put({
         "symbol": s,
         "from_date": req.from_date,
@@ -558,6 +578,45 @@ async def trigger_download(req: DownloadRequest):
     })
     ensure_downloader_running()
     return {"status": "started", "message": f"Letöltés elindítva a háttérben ({s})."}
+
+@app.post("/api/market/download/stop")
+async def stop_download():
+    global download_state
+    download_cancel_event.set()
+
+    # Mark current symbol as stopped by user
+    cur_sym = download_state.get("symbol", "").upper().strip()
+    if cur_sym:
+        user_stopped_symbols.add(cur_sym)
+
+    # Terminate active subprocess immediately
+    if active_download_proc[0] is not None:
+        try:
+            active_download_proc[0].kill()
+        except Exception as e:
+            print(f"[StopDownload] Error killing subprocess: {e}")
+        active_download_proc[0] = None
+
+    # Clear pending queue and mark them as stopped
+    while not auto_download_queue.empty():
+        try:
+            queued_item = auto_download_queue.get_nowait()
+            if isinstance(queued_item, dict):
+                q_sym = queued_item.get("symbol", "").upper().strip()
+            else:
+                q_sym = str(queued_item).upper().strip()
+            if q_sym:
+                user_stopped_symbols.add(q_sym)
+            auto_download_queue.task_done()
+        except Exception:
+            break
+
+    queued_auto_symbols.clear()
+
+    download_state["is_running"] = False
+    download_state["percent"] = 0.0
+    download_state["message"] = "Letöltés leállítva a felhasználó által."
+    return {"status": "stopped", "message": "A letöltési folyamat sikeresen leállítva."}
 
 # --- Instruments & Coverage APIs ---
 @app.get("/api/instruments")

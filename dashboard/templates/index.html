@@ -18,8 +18,10 @@
         </div>
 
         <div class="header-right">
-            <div id="auto-download-badge" class="status-badge" style="display: none; background: rgba(59, 130, 246, 0.15); border: 1px solid #3b82f6; color: #60a5fa; font-family: var(--font-mono); font-size: 11px; margin-right: 8px;">
-                <span class="pulsing-dot" id="auto-download-dot" style="background: #3b82f6;"></span> <span id="auto-download-text">1 ÉVES LETÖLTÉS (0%)</span>
+            <div id="auto-download-badge" class="status-badge" style="display: none; background: rgba(59, 130, 246, 0.15); border: 1px solid #3b82f6; color: #60a5fa; font-family: var(--font-mono); font-size: 11px; margin-right: 8px; align-items: center; gap: 6px;">
+                <span class="pulsing-dot" id="auto-download-dot" style="background: #3b82f6;"></span> 
+                <span id="auto-download-text">1 ÉVES LETÖLTÉS (0%)</span>
+                <button type="button" id="header-stop-btn" onclick="stopHistoricalDownload(event)" title="Letöltés leállítása" style="background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: #f87171; border-radius: 3px; padding: 1px 6px; font-size: 10px; cursor: pointer; margin-left: 4px;">✕ Leállítás</button>
             </div>
             <div class="status-badge status-live" id="connection-status">
                 <span class="pulsing-dot"></span> FEED AKTÍV
@@ -333,12 +335,17 @@
 
                 <!-- Progress bar -->
                 <div id="download-progress-box" style="display: none; margin-top: 12px;">
-                    <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; font-family: var(--font-mono);">
+                    <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; font-family: var(--font-mono); align-items: center;">
                         <span id="download-msg">Letöltés folyamatban...</span>
                         <span id="download-pct">0%</span>
                     </div>
                     <div class="progress-bar-wrap">
                         <div class="progress-bar-inner" id="download-bar-inner"></div>
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; margin-top: 8px;">
+                        <button type="button" class="btn btn-secondary btn-sm" id="tab-stop-btn" onclick="stopHistoricalDownload(event)" style="border-color: #ef4444; color: #f87171;">
+                            ✕ Letöltés Leállítása
+                        </button>
                     </div>
                 </div>
             </div>
