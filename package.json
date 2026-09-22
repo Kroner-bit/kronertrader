@@ -1,23 +1,29 @@
 {
-  "name": "nautilus",
+  "name": "kronertrader",
   "version": "1.0.0",
-  "description": "",
+  "description": "KronerTrader - Algorithmic Trading & Forward-Testing Platform",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nautechsystems/nautilus_trader.git"
+    "url": "git+https://github.com/Kroner-bit/kronertrader.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "algorithmic-trading",
+    "backtesting",
+    "paper-trading",
+    "dukascopy",
+    "fastapi"
+  ],
+  "author": "Króner",
+  "license": "MIT",
   "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/nautechsystems/nautilus_trader/issues"
+    "url": "https://github.com/Kroner-bit/kronertrader/issues"
   },
-  "homepage": "https://github.com/nautechsystems/nautilus_trader#readme",
+  "homepage": "https://github.com/Kroner-bit/kronertrader#readme",
   "dependencies": {
     "dukascopy-node": "^1.50.0"
   }
