@@ -5,7 +5,8 @@ import random
 import asyncio
 import json
 import threading
-from datetime import datetime
+import queue
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -29,7 +30,8 @@ from pydantic import BaseModel
 
 from core.database import (
     DB_PATH, get_db_connection, get_latest_tick, get_tick_count,
-    get_historical_coverage, delete_symbol_ticks, insert_ticks_batch
+    get_historical_coverage, delete_symbol_ticks, insert_ticks_batch,
+    has_one_year_coverage
 )
 from core.paper_broker import PaperBroker
 from core.dukascopy_downloader import download_historical_ticks
@@ -129,14 +131,130 @@ def get_or_fetch_initial_tick(symbol: str) -> Dict[str, Any]:
         "ask_volume": 1.0
     }
 
+# Auto & Background historical download queue and worker
+auto_download_queue: queue.Queue = queue.Queue()
+queued_auto_symbols: set = set()
+completed_one_year_symbols: set = set()
+downloader_worker_thread: Optional[threading.Thread] = None
+
 # Background download state
 download_state = {
     "is_running": False,
     "symbol": "",
     "percent": 0.0,
     "total_ticks": 0,
+    "auto": False,
     "message": "Nincs aktív letöltés"
 }
+
+def _downloader_worker():
+    global download_state
+    while True:
+        try:
+            item = auto_download_queue.get(timeout=2.0)
+        except queue.Empty:
+            continue
+
+        if isinstance(item, dict):
+            sym = item.get("symbol", "").upper().strip()
+            from_date = item.get("from_date")
+            to_date = item.get("to_date")
+            chunk_days = item.get("chunk_days", 14)
+            is_auto = item.get("auto", True)
+        else:
+            sym = str(item).upper().strip()
+            is_auto = True
+            chunk_days = 14
+            now = datetime.now()
+            to_date = now.strftime("%Y-%m-%d")
+            from_date = (now - timedelta(days=365)).strftime("%Y-%m-%d")
+
+        if not sym:
+            auto_download_queue.task_done()
+            continue
+
+        try:
+            print(f"[AutoDownloader] Starting background 1-year historical download for {sym} ({from_date} -> {to_date})...")
+            download_state["is_running"] = True
+            download_state["symbol"] = sym
+            download_state["percent"] = 0.0
+            download_state["total_ticks"] = 0
+            download_state["auto"] = is_auto
+            download_state["message"] = f"Automatikus 1 éves letöltés indítása ({sym}): {from_date} - {to_date}..."
+
+            def on_progress(p):
+                download_state["percent"] = round(p["percent"], 1)
+                download_state["total_ticks"] = p["total_ticks"]
+                download_state["message"] = (
+                    f"[{sym}] 1 év letöltése: {p['chunk_from']} - {p['chunk_to']} "
+                    f"({p['percent']:.1f}% kész, {p['total_ticks']:,} tick mentve)"
+                )
+
+            total = download_historical_ticks(
+                symbol=sym,
+                from_date=from_date,
+                to_date=to_date,
+                chunk_days=chunk_days,
+                db_path=DB_PATH,
+                progress_callback=on_progress
+            )
+            download_state["percent"] = 100.0
+            download_state["is_running"] = False
+            download_state["total_ticks"] = total
+            download_state["message"] = f"✓ {sym} 1 éves historikus adat sikeresen letöltve ({total:,} tick)!"
+            completed_one_year_symbols.add(sym)
+            print(f"[AutoDownloader] Finished download for {sym}: {total:,} ticks stored.")
+        except Exception as e:
+            print(f"[AutoDownloader] Error downloading {sym}: {e}")
+            download_state["is_running"] = False
+            download_state["message"] = f"Hiba a(z) {sym} letöltése során: {str(e)}"
+        finally:
+            queued_auto_symbols.discard(sym)
+            auto_download_queue.task_done()
+
+def ensure_downloader_running():
+    global downloader_worker_thread
+    if downloader_worker_thread is None or not downloader_worker_thread.is_alive():
+        downloader_worker_thread = threading.Thread(
+            target=_downloader_worker,
+            daemon=True,
+            name="HistoricalDownloaderThread"
+        )
+        downloader_worker_thread.start()
+
+def trigger_auto_download_if_needed(symbol: str):
+    """
+    Checks if symbol already has at least ~1 year (300+ days) of historical tick data in SQLite.
+    If not, and if not already queued, enqueues an automatic 1-year download in background.
+    """
+    s = symbol.upper().strip()
+    if not s:
+        return
+    if s in completed_one_year_symbols:
+        return
+    if s in queued_auto_symbols:
+        return
+    try:
+        if has_one_year_coverage(s, DB_PATH):
+            completed_one_year_symbols.add(s)
+            return
+    except Exception as e:
+        print(f"[AutoDownloader] Coverage check error for {s}: {e}")
+        return
+
+    print(f"[AutoDownloader] Aktív stream szimbólumhoz hiányzik az 1 éves adat: {s} -> letöltés sorba állítva!")
+    queued_auto_symbols.add(s)
+    now = datetime.now()
+    to_date = now.strftime("%Y-%m-%d")
+    from_date = (now - timedelta(days=365)).strftime("%Y-%m-%d")
+    auto_download_queue.put({
+        "symbol": s,
+        "from_date": from_date,
+        "to_date": to_date,
+        "chunk_days": 14,
+        "auto": True
+    })
+    ensure_downloader_running()
 
 # --- Pydantic Models ---
 class StreamActionRequest(BaseModel):
@@ -244,6 +362,8 @@ async def create_account(req: CreateAccountRequest):
                     "ask": tick["ask"],
                     "ticks_session": 0
                 }
+            if sym_clean:
+                trigger_auto_download_if_needed(sym_clean)
 
         # 2. Automatically bind and launch strategy if provided
         if req.strategy_key and req.strategy_symbol:
@@ -422,43 +542,22 @@ async def get_market_stats(symbol: str = "EURUSD"):
         "download_state": download_state
     }
 
-def _bg_download_task(symbol: str, from_date: str, to_date: str, chunk_days: int):
-    global download_state
-    download_state["is_running"] = True
-    download_state["symbol"] = symbol
-    download_state["percent"] = 0.0
-    download_state["message"] = f"Letöltés indítása: {symbol} ({from_date} - {to_date})..."
-
-    def on_progress(p):
-        download_state["percent"] = round(p["percent"], 1)
-        download_state["total_ticks"] = p["total_ticks"]
-        download_state["message"] = f"Letöltve: {p['chunk_from']} - {p['chunk_to']} ({p['chunk_ticks']:,} tick)"
-
-    try:
-        total = download_historical_ticks(
-            symbol=symbol,
-            from_date=from_date,
-            to_date=to_date,
-            chunk_days=chunk_days,
-            db_path=DB_PATH,
-            progress_callback=on_progress
-        )
-        download_state["is_running"] = False
-        download_state["percent"] = 100.0
-        download_state["total_ticks"] = total
-        download_state["message"] = f"Sikeres letöltés! Összesen {total:,} tick hozzáadva."
-    except Exception as e:
-        download_state["is_running"] = False
-        download_state["message"] = f"Hiba a letöltés során: {str(e)}"
-
 @app.post("/api/market/download")
-async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTasks):
+async def trigger_download(req: DownloadRequest):
     global download_state
     if download_state["is_running"]:
         raise HTTPException(status_code=400, detail="Már fut egy letöltési folyamat a háttérben.")
 
-    background_tasks.add_task(_bg_download_task, req.symbol, req.from_date, req.to_date, req.chunk_days)
-    return {"status": "started", "message": "Letöltés elindítva a háttérben."}
+    s = req.symbol.upper().strip()
+    auto_download_queue.put({
+        "symbol": s,
+        "from_date": req.from_date,
+        "to_date": req.to_date,
+        "chunk_days": req.chunk_days or 14,
+        "auto": False
+    })
+    ensure_downloader_running()
+    return {"status": "started", "message": f"Letöltés elindítva a háttérben ({s})."}
 
 # --- Instruments & Coverage APIs ---
 @app.get("/api/instruments")
@@ -483,8 +582,10 @@ async def get_market_coverage():
 
 @app.delete("/api/market/coverage/{symbol}")
 async def delete_symbol_coverage(symbol: str):
-    deleted = delete_symbol_ticks(symbol, DB_PATH)
-    return {"status": "deleted", "symbol": symbol.upper(), "deleted_ticks": deleted}
+    s = symbol.upper().strip()
+    completed_one_year_symbols.discard(s)
+    deleted = delete_symbol_ticks(s, DB_PATH)
+    return {"status": "deleted", "symbol": s, "deleted_ticks": deleted}
 
 # --- Multi-Ticker Live Streams Manager ---
 @app.get("/api/market/live-streams")
@@ -520,6 +621,7 @@ async def start_live_stream(req: StreamActionRequest):
         "ask": tick["ask"],
         "ticks_session": 0
     }
+    trigger_auto_download_if_needed(sym)
     return {"status": "started", "symbol": sym}
 
 @app.post("/api/market/live-streams/stop")
@@ -531,6 +633,13 @@ async def stop_live_stream(req: StreamActionRequest):
 
 def _get_pip_step(symbol: str) -> float:
     return get_symbol_spec(symbol)["pip_step"]
+
+# Startup Hook
+@app.on_event("startup")
+async def on_startup():
+    ensure_downloader_running()
+    for sym in list(active_streams.keys()):
+        trigger_auto_download_if_needed(sym)
 
 # --- Real-time WebSocket Feed ---
 @app.websocket("/ws/live")
@@ -583,6 +692,10 @@ async def websocket_live_endpoint(websocket: WebSocket):
                 for runner in list(active_runners.values()):
                     if runner.is_running and runner.symbol == sym:
                         runner.on_tick(tick_obj)
+
+            # Check if any active stream needs auto-download
+            for sym in list(active_streams.keys()):
+                trigger_auto_download_if_needed(sym)
 
             accounts = broker.list_accounts()
             for acc in accounts:

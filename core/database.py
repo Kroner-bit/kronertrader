@@ -252,6 +252,26 @@ def delete_symbol_ticks(symbol: str, db_path: str = DB_PATH) -> int:
     conn.close()
     return deleted
 
+def has_one_year_coverage(symbol: str, db_path: str = DB_PATH) -> bool:
+    """Checks if a symbol has at least ~300 days of historical tick coverage in SQLite."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT COUNT(*) as count, MIN(timestamp) as min_ts, MAX(timestamp) as max_ts 
+    FROM ticks 
+    WHERE symbol = ?;
+    """, (symbol.upper().strip(),))
+    row = cursor.fetchone()
+    conn.close()
+    if not row or row["count"] < 1000:
+        return False
+    min_ts = row["min_ts"]
+    max_ts = row["max_ts"]
+    if not min_ts or not max_ts:
+        return False
+    days = (max_ts - min_ts) / (1000 * 86400)
+    return days >= 300
+
 if __name__ == "__main__":
     init_db()
     print("Database initialized successfully at:", DB_PATH)

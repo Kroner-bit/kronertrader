@@ -143,7 +143,7 @@ function initWebSocket() {
             if (data.active_strategies) {
                 renderActiveStrategies(data.active_strategies);
             }
-            if (data.download_state && data.download_state.is_running) {
+            if (data.download_state) {
                 updateDownloadProgress(data.download_state);
             }
         } catch (e) {
@@ -1070,7 +1070,7 @@ async function loadMarketStats() {
         if (tickCountEl) tickCountEl.textContent = data.total_ticks.toLocaleString();
         if (symbolTicksEl) symbolTicksEl.textContent = data.symbol_ticks.toLocaleString();
 
-        if (data.download_state && data.download_state.is_running) {
+        if (data.download_state) {
             updateDownloadProgress(data.download_state);
         }
     } catch (e) {
@@ -1078,23 +1078,97 @@ async function loadMarketStats() {
     }
 }
 
+let downloadCompleteTimeout = null;
+
 function updateDownloadProgress(state) {
+    if (!state) return;
+
+    // 1. Data management tab elements
     const box = document.getElementById("download-progress-box");
     const bar = document.getElementById("download-bar-inner");
     const msg = document.getElementById("download-msg");
     const pct = document.getElementById("download-pct");
 
-    if (box) box.style.display = "block";
-    if (bar) bar.style.width = `${state.percent}%`;
-    if (pct) pct.textContent = `${state.percent}%`;
-    if (msg) msg.textContent = state.message;
+    // 2. Top header badge elements
+    const badge = document.getElementById("auto-download-badge");
+    const badgeText = document.getElementById("auto-download-text");
+    const badgeDot = document.getElementById("auto-download-dot");
 
-    if (!state.is_running && state.percent >= 100) {
-        setTimeout(() => {
-            if (box) box.style.display = "none";
-            loadMarketStats();
-            loadHistoricalCoverage();
-        }, 4000);
+    if (state.is_running) {
+        if (downloadCompleteTimeout) {
+            clearTimeout(downloadCompleteTimeout);
+            downloadCompleteTimeout = null;
+        }
+
+        // Show data tab box
+        if (box) box.style.display = "block";
+        if (bar) bar.style.width = `${state.percent}%`;
+        if (pct) pct.textContent = `${state.percent}%`;
+        if (msg) msg.textContent = state.message;
+
+        // Show top header badge
+        if (badge && badgeText) {
+            badge.style.display = "inline-flex";
+            badge.style.background = "rgba(59, 130, 246, 0.15)";
+            badge.style.borderColor = "#3b82f6";
+            badge.style.color = "#60a5fa";
+            if (badgeDot) {
+                badgeDot.style.background = "#3b82f6";
+                badgeDot.style.display = "inline-block";
+            }
+            const sym = state.symbol ? `[${state.symbol}] ` : "";
+            const prefix = state.auto ? "1 ÉVES LETÖLTÉS" : "LETÖLTÉS";
+            badgeText.textContent = `${sym}${prefix} (${state.percent}%)`;
+        }
+    } else if (state.percent >= 100) {
+        // Completed
+        if (box) box.style.display = "block";
+        if (bar) bar.style.width = "100%";
+        if (pct) pct.textContent = "100%";
+        if (msg) msg.textContent = state.message;
+
+        if (badge && badgeText) {
+            badge.style.display = "inline-flex";
+            badge.style.background = "rgba(34, 197, 94, 0.15)";
+            badge.style.borderColor = "#22c55e";
+            badge.style.color = "#4ade80";
+            if (badgeDot) {
+                badgeDot.style.background = "#22c55e";
+            }
+            const sym = state.symbol ? `[${state.symbol}] ` : "";
+            badgeText.textContent = `✓ ${sym}1 ÉV ADAT KÉSZ`;
+        }
+
+        if (!downloadCompleteTimeout) {
+            downloadCompleteTimeout = setTimeout(() => {
+                if (badge) badge.style.display = "none";
+                if (box) box.style.display = "none";
+                loadMarketStats();
+                loadHistoricalCoverage();
+                downloadCompleteTimeout = null;
+            }, 8000);
+        }
+    } else if (state.message && state.message.toLowerCase().includes("hiba")) {
+        // Error state
+        if (box) box.style.display = "block";
+        if (msg) msg.textContent = state.message;
+
+        if (badge && badgeText) {
+            badge.style.display = "inline-flex";
+            badge.style.background = "rgba(239, 68, 68, 0.15)";
+            badge.style.borderColor = "#ef4444";
+            badge.style.color = "#f87171";
+            if (badgeDot) badgeDot.style.background = "#ef4444";
+            badgeText.textContent = `⚠ LETÖLTÉSI HIBA`;
+        }
+
+        if (!downloadCompleteTimeout) {
+            downloadCompleteTimeout = setTimeout(() => {
+                if (badge) badge.style.display = "none";
+                if (box) box.style.display = "none";
+                downloadCompleteTimeout = null;
+            }, 8000);
+        }
     }
 }
 

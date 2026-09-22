@@ -95,10 +95,14 @@ def download_historical_ticks(
 
         print(f"\n[Chunk] Downloading {symbol.upper()} from {chunk_from_str} to {chunk_to_str}...")
 
+        from core.instruments import get_instrument_by_symbol
+        meta = get_instrument_by_symbol(symbol)
+        inst_id = meta["id"] if meta and "id" in meta else symbol.lower()
+
         # Run dukascopy-node CLI
         cmd = [
             "npx", "-y", "dukascopy-node",
-            "-i", symbol.lower(),
+            "-i", inst_id,
             "-from", chunk_from_str,
             "-to", chunk_to_str,
             "-t", "tick",
@@ -123,12 +127,16 @@ def download_historical_ticks(
         except Exception as e:
             print(f"Error running dukascopy-node: {e}")
 
-
         # Find generated CSV
-        csv_files = glob.glob(os.path.join(temp_dir, f"*{symbol.lower()}*.csv"))
+        csv_files = glob.glob(os.path.join(temp_dir, f"*{inst_id}*.csv"))
+        if not csv_files:
+            csv_files = glob.glob(os.path.join(temp_dir, f"*{symbol.lower()}*.csv"))
+        if not csv_files:
+            csv_files = glob.glob(os.path.join(temp_dir, "*.csv"))
+
         chunk_ticks = 0
         for csv_file in csv_files:
-            imported = import_csv_file_to_sqlite(csv_file, symbol=symbol, db_path=db_path)
+            imported = import_csv_file_to_sqlite(csv_file, symbol=symbol.upper(), db_path=db_path)
             chunk_ticks += imported
             try:
                 os.remove(csv_file)
