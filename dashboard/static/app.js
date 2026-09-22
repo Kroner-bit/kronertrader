@@ -58,10 +58,10 @@ function initWebSocket() {
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-        console.log("WebSocket connected to Nautilus live feed");
+        console.log("WebSocket connected to KronerTrader live feed");
         const badge = document.getElementById("connection-status");
         if (badge) {
-            badge.innerHTML = `<span class="pulsing-dot"></span> LIVE FEED AKTÍV`;
+            badge.innerHTML = `<span class="pulsing-dot"></span> FEED AKTÍV`;
             badge.className = "status-badge status-live";
         }
     };
@@ -185,8 +185,8 @@ async function loadHistoricalCoverage() {
                 <td><span class="card-tag">${c.duration_days} nap</span></td>
                 <td><code>${latestPrice}</code></td>
                 <td>
-                    <button class="btn btn-secondary btn-sm" onclick="startBacktestForSymbol('${c.symbol}')">🧪 Visszateszt</button>
-                    <button class="btn btn-danger btn-sm" onclick="deleteSymbolCoverage('${c.symbol}')">🗑️ Törlés</button>
+                    <button class="btn btn-secondary btn-sm" onclick="startBacktestForSymbol('${c.symbol}')">Visszateszt</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteSymbolCoverage('${c.symbol}')">Törlés</button>
                 </td>
             </tr>
             `;
@@ -394,8 +394,8 @@ async function loadActiveStrategies() {
         tbody.innerHTML = strategies.map(s => {
             const isRunning = s.status === "RUNNING";
             const badge = isRunning 
-                ? `<span class="status-badge status-live"><span class="pulsing-dot"></span> FUT</span>` 
-                : `<span class="status-badge" style="background:rgba(239,68,68,0.15); color:var(--accent-red)">LEÁLLÍTVA</span>`;
+                ? `<span class="status-badge status-live"><span class="pulsing-dot"></span> AKTÍV</span>` 
+                : `<span class="status-badge" style="background:var(--accent-red-bg); color:var(--accent-red-bright); border-color:#991b1b">LEÁLLÍTVA</span>`;
             
             const actionBtn = isRunning
                 ? `<button class="btn btn-danger btn-sm" onclick="stopStrategy('${s.strategy_id}')">Leállítás</button>`
@@ -562,7 +562,7 @@ async function loadBacktests() {
         tbody.innerHTML = runs.map(r => {
             const retClass = r.return_pct >= 0 ? "val-green" : "val-red";
             const reportBtn = r.html_report_path 
-                ? `<a href="/reports/${r.html_report_path}" target="_blank" class="btn btn-secondary btn-sm">📊 Bokeh Grafikon</a>`
+                ? `<a href="/reports/${r.html_report_path}" target="_blank" class="btn btn-secondary btn-sm">Bokeh Riport</a>`
                 : '-';
 
             return `
@@ -588,7 +588,7 @@ async function runBacktestForm(e) {
     e.preventDefault();
     const btn = document.getElementById("btn-run-backtest");
     const originalText = btn.innerHTML;
-    btn.innerHTML = `⏳ Futtatás folyamatban...`;
+    btn.innerHTML = `Futtatás folyamatban...`;
     btn.disabled = true;
 
     const strategy_key = document.getElementById("bt-strategy").value;
@@ -645,8 +645,8 @@ async function loadStrategiesCatalog() {
                 </div>
                 <p class="section-desc" style="margin-bottom: 16px;">${s.description}</p>
                 <div style="display: flex; gap: 8px;">
-                    <button class="btn btn-primary btn-sm" onclick="openStartStrategyModal('${s.key}')">⚡ Indítás Demón</button>
-                    <button class="btn btn-secondary btn-sm" onclick="openBacktestTab('${s.key}')">🧪 Visszateszt</button>
+                    <button class="btn btn-primary btn-sm" onclick="openStartStrategyModal('${s.key}')">Indítás Demón</button>
+                    <button class="btn btn-secondary btn-sm" onclick="openBacktestTab('${s.key}')">Visszateszt</button>
                 </div>
             </div>
         `).join("");

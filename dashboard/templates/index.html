@@ -3,60 +3,57 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nautilus Trading Platform & Forward-Test Engine</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <title>KronerTrader — Industrial Trading Platform</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <!-- Top Header -->
+    <!-- Top Industrial Header -->
     <header class="header">
         <div class="brand">
-            <div class="brand-icon">⚡</div>
+            <div class="brand-badge">KT</div>
             <div>
-                <div class="brand-title">NAUTILUS TRADER</div>
+                <div class="brand-title">KRONERTRADER</div>
                 <div class="brand-subtitle">Dukascopy • Backtest • Paper Engine</div>
             </div>
         </div>
 
         <div class="header-right">
             <div class="status-badge status-live" id="connection-status">
-                <span class="pulsing-dot"></span> LIVE FEED AKTÍV
+                <span class="pulsing-dot"></span> FEED AKTÍV
             </div>
         </div>
     </header>
 
-    <!-- Navigation Tabs -->
+    <!-- Navigation Toolbar -->
     <nav class="nav-tabs">
-        <button class="nav-tab active" data-tab="accounts-tab">📊 Portfólió & Demó Számlák</button>
-        <button class="nav-tab" data-tab="active-tab">⚡ Aktív Stratégiák</button>
-        <button class="nav-tab" data-tab="backtest-tab">🧪 Backtest Központ</button>
-        <button class="nav-tab" data-tab="catalog-tab">📜 Stratégia Katalógus</button>
-        <button class="nav-tab" data-tab="data-tab">📡 Élő Stream & Történeti Adattár</button>
+        <button class="nav-tab active" data-tab="accounts-tab">Portfólió &amp; Demó Számlák</button>
+        <button class="nav-tab" data-tab="active-tab">Aktív Stratégiák</button>
+        <button class="nav-tab" data-tab="backtest-tab">Backtest Központ</button>
+        <button class="nav-tab" data-tab="catalog-tab">Stratégia Katalógus</button>
+        <button class="nav-tab" data-tab="data-tab">Élő Stream &amp; Történeti Adatok</button>
     </nav>
 
-    <!-- Main Content Container -->
+    <!-- Main Workspace -->
     <main class="main-content">
 
         <!-- 1. ACCOUNTS & PORTFOLIO TAB -->
         <section id="accounts-tab" class="tab-pane active">
             <div class="section-header">
                 <div>
-                    <h2 class="section-title">Demó Számlák & Portfólió Áttekintés</h2>
-                    <p class="section-desc">Belső szimulált egyenlegek, margin kihasználtság és valós idejű teljesítmény.</p>
+                    <h2 class="section-title">Demó Számlák &amp; Portfólió Áttekintés</h2>
+                    <p class="section-desc">Szimulált egyenlegek, margin adatok és pozíciók teljesítménye.</p>
                 </div>
                 <button class="btn btn-primary" onclick="openModal('modal-account')">+ Új Demó Számla</button>
             </div>
 
             <div class="cards-grid" id="accounts-grid">
-                <!-- Dynamically filled -->
+                <!-- Dynamically populated -->
             </div>
 
-            <div class="section-header" style="margin-top: 36px;">
+            <div class="section-header" style="margin-top: 24px;">
                 <div>
-                    <h3 class="section-title" style="font-size: 18px;">Nyitott Pozíciók (Élő Market Áron)</h3>
-                    <p class="section-desc">Folyamatos SL/TP és lebegő PnL követés tick szinten.</p>
+                    <h3 class="section-title">Nyitott Pozíciók (Élő Piaci Ár)</h3>
+                    <p class="section-desc">Valós idejű SL/TP szintek és lebegő PnL követése.</p>
                 </div>
             </div>
             <div class="table-container">
@@ -75,15 +72,15 @@
                         </tr>
                     </thead>
                     <tbody id="positions-body">
-                        <!-- Dynamically filled -->
+                        <!-- Dynamically populated -->
                     </tbody>
                 </table>
             </div>
 
-            <div class="section-header" style="margin-top: 36px;">
+            <div class="section-header" style="margin-top: 24px;">
                 <div>
-                    <h3 class="section-title" style="font-size: 18px;">Lezárt Kötések Története</h3>
-                    <p class="section-desc">Valós realizált nyereségek és veszteségek.</p>
+                    <h3 class="section-title">Lezárt Kötések Története</h3>
+                    <p class="section-desc">Realizált nyereségek és veszteségek tételes listája.</p>
                 </div>
             </div>
             <div class="table-container">
@@ -101,7 +98,7 @@
                         </tr>
                     </thead>
                     <tbody id="trades-body">
-                        <!-- Dynamically filled -->
+                        <!-- Dynamically populated -->
                     </tbody>
                 </table>
             </div>
@@ -112,9 +109,9 @@
             <div class="section-header">
                 <div>
                     <h2 class="section-title">Aktív Kereskedési Stratégiák (Forward Test)</h2>
-                    <p class="section-desc">A demó számlákhoz rendelt, valós időben futó stratégiák állapota.</p>
+                    <p class="section-desc">Demó számlákon valós időben futó stratégiák folyamatai.</p>
                 </div>
-                <button class="btn btn-primary" onclick="openModal('modal-start-strategy')">+ Stratégia Indítása Demón</button>
+                <button class="btn btn-primary" onclick="openModal('modal-start-strategy')">+ Stratégia Indítása</button>
             </div>
 
             <div class="table-container">
@@ -131,7 +128,7 @@
                         </tr>
                     </thead>
                     <tbody id="active-strategies-body">
-                        <!-- Dynamically filled -->
+                        <!-- Dynamically populated -->
                     </tbody>
                 </table>
             </div>
@@ -142,14 +139,14 @@
             <div class="section-header">
                 <div>
                     <h2 class="section-title">Visszatesztelés (backtesting.py)</h2>
-                    <p class="section-desc">Történeti SQLite tickekből képzett gyertyák tesztelése interaktív Bokeh grafikonokkal.</p>
+                    <p class="section-desc">Történeti SQLite tick adatokból generált gyertyák kvantitatív tesztelése.</p>
                 </div>
             </div>
 
-            <!-- Backtest launcher card -->
-            <div class="card" style="margin-bottom: 28px;">
+            <!-- Backtest launcher form panel -->
+            <div class="card" style="margin-bottom: 20px;">
                 <form id="form-backtest" onsubmit="runBacktestForm(event)">
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 12px;">
                         <div class="form-group">
                             <label class="form-label">Stratégia</label>
                             <select class="form-control" id="bt-strategy" required></select>
@@ -158,7 +155,6 @@
                             <label class="form-label">Pár / Ticker</label>
                             <select class="form-control" id="bt-symbol" required></select>
                         </div>
-
                         <div class="form-group">
                             <label class="form-label">Gyertya Idősík</label>
                             <select class="form-control" id="bt-timeframe">
@@ -174,30 +170,30 @@
                             <input type="number" class="form-control" id="bt-cash" value="10000" step="500">
                         </div>
                     </div>
-                    <button type="submit" class="btn btn-primary" id="btn-run-backtest">🚀 Visszateszt Futtatása (Bokeh Riporttal)</button>
+                    <button type="submit" class="btn btn-primary" id="btn-run-backtest">Visszateszt Futtatása (Bokeh Riport)</button>
                 </form>
             </div>
 
             <div class="section-header">
-                <h3 class="section-title" style="font-size: 18px;">Korábbi Visszateszt Eredmények</h3>
+                <h3 class="section-title">Korábbi Visszateszt Eredmények</h3>
             </div>
             <div class="table-container">
                 <table>
                     <thead>
                         <tr>
                             <th>Stratégia</th>
-                            <th>Pár & Idősík</th>
+                            <th>Pár &amp; Idősík</th>
                             <th>Időszak</th>
                             <th>Kezdőtőke</th>
                             <th>Záró Tőke</th>
                             <th>Hozam %</th>
                             <th>Sharpe</th>
                             <th>Win Rate</th>
-                            <th>Interaktív Riport</th>
+                            <th>Riport</th>
                         </tr>
                     </thead>
                     <tbody id="backtest-runs-body">
-                        <!-- Dynamically filled -->
+                        <!-- Dynamically populated -->
                     </tbody>
                 </table>
             </div>
@@ -208,12 +204,12 @@
             <div class="section-header">
                 <div>
                     <h2 class="section-title">Elérhető Stratégiák Katalógusa</h2>
-                    <p class="section-desc">A <code>strategies/</code> mappában definiált moduláris stratégiák.</p>
+                    <p class="section-desc">A <code>strategies/</code> könyvtárban nyilvántartott moduláris algoritmusok.</p>
                 </div>
             </div>
 
             <div class="cards-grid" id="catalog-grid">
-                <!-- Dynamically filled -->
+                <!-- Dynamically populated -->
             </div>
         </section>
 
@@ -223,8 +219,8 @@
             <!-- Live Streamed Tickers Section -->
             <div class="section-header">
                 <div>
-                    <h2 class="section-title">📡 Valós Idejű WebSocket Streamelt Tickerek</h2>
-                    <p class="section-desc">A háttérben valós időben közvetített és stratégiákhoz továbbított árfolyamok.</p>
+                    <h2 class="section-title">Valós Idejű Streamelt Tickerek (WebSocket)</h2>
+                    <p class="section-desc">A háttérben valós időben közvetített és perzisztált piaci jegyzések.</p>
                 </div>
                 <button class="btn btn-primary" onclick="openModal('modal-add-stream')">+ Új Ticker Streamelése</button>
             </div>
@@ -244,16 +240,16 @@
                         </tr>
                     </thead>
                     <tbody id="live-streams-body">
-                        <!-- Dynamically filled -->
+                        <!-- Dynamically populated -->
                     </tbody>
                 </table>
             </div>
 
             <!-- Downloaded Historical Coverage Section -->
-            <div class="section-header" style="margin-top: 40px;">
+            <div class="section-header" style="margin-top: 24px;">
                 <div>
-                    <h2 class="section-title">💾 Letöltött Történeti Adatok Lefedettsége (SQLite)</h2>
-                    <p class="section-desc">Az adatbázisban tárolt tickek pontos időintervalluma és mennyisége szimbólumonként.</p>
+                    <h2 class="section-title">Letöltött Történeti Adatbázis (SQLite)</h2>
+                    <p class="section-desc">Az adatbázisban indexelt tick intervallumok és darabszámok.</p>
                 </div>
             </div>
 
@@ -262,34 +258,34 @@
                     <thead>
                         <tr>
                             <th>Szimbólum</th>
-                            <th>Név & Kategória</th>
+                            <th>Név &amp; Kategória</th>
                             <th>Letöltött Tickek</th>
-                            <th>Adat Kezdete</th>
-                            <th>Adat Vége</th>
+                            <th>Kezdő Időpont</th>
+                            <th>Záró Időpont</th>
                             <th>Lefedettség</th>
                             <th>Legfrissebb Ár</th>
                             <th>Műveletek</th>
                         </tr>
                     </thead>
                     <tbody id="coverage-body">
-                        <!-- Dynamically filled -->
+                        <!-- Dynamically populated -->
                     </tbody>
                 </table>
             </div>
 
             <!-- New Download Section -->
-            <div class="section-header" style="margin-top: 40px;">
+            <div class="section-header" style="margin-top: 24px;">
                 <div>
-                    <h3 class="section-title" style="font-size: 18px;">Új Történeti Tick Letöltése a Dukascopy-ról</h3>
-                    <p class="section-desc">Válassz ki egy elérhető tickert a listából, add meg az időszakot és töltsd be SQLite-ba.</p>
+                    <h3 class="section-title">Új Tick Adatok Letöltése (Dukascopy)</h3>
+                    <p class="section-desc">Szimbólum és időintervallum megadása közvetlen SQLite importáláshoz.</p>
                 </div>
             </div>
 
             <div class="card" style="max-width: 800px;">
                 <form onsubmit="triggerHistoricalDownload(event)">
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 16px;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 12px;">
                         <div class="form-group">
-                            <label class="form-label">Dukascopy Ticker Kiválasztása</label>
+                            <label class="form-label">Ticker Kiválasztása</label>
                             <select class="form-control" id="dl-symbol" required></select>
                         </div>
                         <div class="form-group">
@@ -301,12 +297,12 @@
                             <input type="date" class="form-control" id="dl-to" value="2026-03-08" required>
                         </div>
                     </div>
-                    <button type="submit" class="btn btn-primary" style="width: 100%;">📥 Letöltés Indítása SQLite-ba (dukascopy-node)</button>
+                    <button type="submit" class="btn btn-primary" style="width: 100%;">Letöltés Indítása (dukascopy-node)</button>
                 </form>
 
                 <!-- Progress bar -->
-                <div id="download-progress-box" style="display: none; margin-top: 16px;">
-                    <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">
+                <div id="download-progress-box" style="display: none; margin-top: 12px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; font-family: var(--font-mono);">
                         <span id="download-msg">Letöltés folyamatban...</span>
                         <span id="download-pct">0%</span>
                     </div>
@@ -332,7 +328,7 @@
                     <input class="form-control" id="new-acc-id" required placeholder="demo_1">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Számla Neve</label>
+                    <label class="form-label">Számla Megnevezése</label>
                     <input class="form-control" id="new-acc-name" required placeholder="Fő Kereskedési Demó">
                 </div>
                 <div class="form-group">
@@ -387,7 +383,7 @@
                     <label class="form-label">Kötési Volumen (Lot)</label>
                     <input type="number" class="form-control" id="strategy-volume" value="0.1" step="0.01" min="0.01">
                 </div>
-                <button type="submit" class="btn btn-primary" style="width: 100%;">⚡ Indítás Élesben (Forward Test)</button>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Indítás Forward Módba</button>
             </form>
         </div>
     </div>
@@ -396,7 +392,7 @@
     <div class="modal-backdrop" id="modal-add-stream">
         <div class="modal">
             <div class="modal-header">
-                <h3>Új Ticker Streamelése Élőben</h3>
+                <h3>Új Ticker Streamelése</h3>
                 <button class="modal-close" onclick="closeModal('modal-add-stream')">&times;</button>
             </div>
             <form onsubmit="addLiveStreamTicker(event)">
@@ -404,10 +400,10 @@
                     <label class="form-label">Válassz Tickért a Streameléshez</label>
                     <select class="form-control" id="stream-ticker-select" required></select>
                 </div>
-                <p class="section-desc" style="margin-bottom: 16px;">
-                    A kiválasztott ticker folyamatos élő feedet kap a belső WebSocket csatornán, és az érkező tickeket az SQLite automatikusan menti.
+                <p class="section-desc" style="margin-bottom: 14px;">
+                    A kiválasztott ticker folyamatos élő feedet kap a belső WebSocket csatornán keresztül és az érkező tickeket az SQLite automatikusan rögzíti.
                 </p>
-                <button type="submit" class="btn btn-primary" style="width: 100%;">📡 Stream Elindítása</button>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Stream Elindítása</button>
             </form>
         </div>
     </div>
@@ -415,4 +411,3 @@
     <script src="/static/app.js"></script>
 </body>
 </html>
-
