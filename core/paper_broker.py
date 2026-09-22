@@ -63,6 +63,23 @@ class PaperBroker:
         conn.close()
         return self.get_account(account_id)
 
+    def delete_account(self, account_id: str) -> bool:
+        conn = get_db_connection(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM demo_accounts WHERE id = ?;", (account_id,))
+            if not cursor.fetchone():
+                return False
+
+            with conn:
+                cursor.execute("DELETE FROM positions WHERE account_id = ?;", (account_id,))
+                cursor.execute("DELETE FROM trade_history WHERE account_id = ?;", (account_id,))
+                cursor.execute("DELETE FROM active_strategies WHERE account_id = ?;", (account_id,))
+                cursor.execute("DELETE FROM demo_accounts WHERE id = ?;", (account_id,))
+            return True
+        finally:
+            conn.close()
+
     def place_order(
         self,
         account_id: str,

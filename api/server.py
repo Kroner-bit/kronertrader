@@ -164,6 +164,9 @@ class StartStrategyRequest(BaseModel):
 class StopStrategyRequest(BaseModel):
     strategy_id: str
 
+class DeleteStrategyRequest(BaseModel):
+    strategy_id: str
+
 class BacktestRequest(BaseModel):
     strategy_key: str
     symbol: str = "EURUSD"
@@ -262,6 +265,27 @@ async def create_account(req: CreateAccountRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.delete("/api/accounts/{account_id}")
+async def delete_account_endpoint(account_id: str):
+    # 1. Stop and remove any active strategy runners running on this account
+    for runner_key, runner in list(active_runners.items()):
+        if runner.account_id == account_id:
+            try:
+                runner.stop()
+            except Exception:
+                pass
+            del active_runners[runner_key]
+
+    # 2. Delete account and related records from database
+    success = broker.delete_account(account_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Demó számla nem található")
+    return {"status": "deleted", "account_id": account_id}
+
+@app.post("/api/accounts/{account_id}/delete")
+async def delete_account_post(account_id: str):
+    return await delete_account_endpoint(account_id)
+
 @app.get("/api/positions")
 async def get_positions(account_id: Optional[str] = None):
     return broker.get_positions(account_id=account_id)
@@ -332,6 +356,30 @@ async def stop_strategy(req: StopStrategyRequest):
     conn.commit()
     conn.close()
     return {"status": "stopped_in_db", "strategy_id": runner_key}
+
+@app.delete("/api/active-strategies/{strategy_id}")
+async def delete_active_strategy_endpoint(strategy_id: str):
+    # 1. Stop and remove runner if running
+    if strategy_id in active_runners:
+        try:
+            active_runners[strategy_id].stop()
+        except Exception:
+            pass
+        del active_runners[strategy_id]
+
+    # 2. Delete from SQLite database
+    conn = get_db_connection(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM active_strategies WHERE strategy_id = ?;", (strategy_id,))
+    deleted = c.rowcount > 0
+    conn.commit()
+    conn.close()
+
+    return {"status": "deleted", "strategy_id": strategy_id, "deleted_from_db": deleted}
+
+@app.post("/api/active-strategies/delete")
+async def delete_active_strategy_post(req: DeleteStrategyRequest):
+    return await delete_active_strategy_endpoint(req.strategy_id)
 
 # --- Backtest APIs ---
 @app.get("/api/backtests")

@@ -5,11 +5,10 @@ from typing import Optional, List, Dict, Any
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "market_data.db")
 
 def get_db_connection(db_path: str = DB_PATH) -> sqlite3.Connection:
-    """Returns an optimized SQLite connection with WAL mode enabled."""
+    """Returns an optimized SQLite connection."""
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path, check_same_thread=False, timeout=30.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA synchronous = NORMAL;")
     conn.execute("PRAGMA busy_timeout = 30000;")
     return conn
@@ -17,6 +16,7 @@ def get_db_connection(db_path: str = DB_PATH) -> sqlite3.Connection:
 def init_db(db_path: str = DB_PATH):
     """Initializes tables and indexes for the trading platform."""
     conn = get_db_connection(db_path)
+    conn.execute("PRAGMA journal_mode = WAL;")
     cursor = conn.cursor()
 
     # 1. Ticks table

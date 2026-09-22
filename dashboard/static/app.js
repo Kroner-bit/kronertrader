@@ -572,7 +572,10 @@ async function loadAccounts() {
                         <span class="ticker-label">ID: ${acc.id} • Tőkeáttétel: 1:${acc.leverage}</span>
                         ${stratBadge}
                     </div>
-                    <span class="card-tag">${acc.currency}</span>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="card-tag">${acc.currency}</span>
+                        <button class="btn btn-danger btn-sm" onclick="deleteAccount('${acc.id}', '${acc.name}')" title="Demó számla törlése">Törlés</button>
+                    </div>
                 </div>
                 <div class="card-stats">
                     <div class="stat-box">
@@ -597,6 +600,27 @@ async function loadAccounts() {
         }).join("");
     } catch (e) {
         console.error("Error loading accounts:", e);
+    }
+}
+
+async function deleteAccount(accountId, accountName) {
+    const displayName = accountName || accountId;
+    if (!confirm(`Biztosan törölni szeretnéd a(z) "${displayName}" demó számlát?\n\nA számlához tartozó összes nyitott pozíció és futó stratégia is leáll és véglegesen törlődik.`)) {
+        return;
+    }
+    try {
+        const res = await fetch(`/api/accounts/${accountId}`, { method: "DELETE" });
+        if (res.ok) {
+            loadAccounts();
+            loadActiveStrategies();
+            loadPositions();
+            loadTrades();
+        } else {
+            const err = await res.json();
+            alert("Hiba a számla törlésekor: " + (err.detail || "Ismeretlen hiba"));
+        }
+    } catch (e) {
+        alert("Hiba: " + e.message);
     }
 }
 
@@ -669,9 +693,14 @@ async function loadActiveStrategies() {
                 ? `<span class="status-badge status-live"><span class="pulsing-dot"></span> AKTÍV</span>` 
                 : `<span class="status-badge" style="background:var(--accent-red-bg); color:var(--accent-red-bright); border-color:#991b1b">LEÁLLÍTVA</span>`;
             
-            const actionBtn = isRunning
-                ? `<button class="btn btn-danger btn-sm" onclick="stopStrategy('${s.strategy_id}')">Leállítás</button>`
-                : `<button class="btn btn-primary btn-sm" onclick="restartStrategy('${s.strategy_name}', '${s.account_id}', '${s.symbol}', '${s.timeframe}')">Indítás</button>`;
+            const actionBtns = `
+                <div style="display: flex; gap: 6px; align-items: center;">
+                    ${isRunning
+                        ? `<button class="btn btn-secondary btn-sm" onclick="stopStrategy('${s.strategy_id}')">Leállítás</button>`
+                        : `<button class="btn btn-primary btn-sm" onclick="restartStrategy('${s.strategy_id}', '${s.account_id}', '${s.symbol}', '${s.timeframe}')">Indítás</button>`}
+                    <button class="btn btn-danger btn-sm" onclick="deleteStrategy('${s.strategy_id}', '${s.strategy_name}')" title="Stratégia végleges törlése">Törlés</button>
+                </div>
+            `;
 
             return `
             <tr>
@@ -681,7 +710,7 @@ async function loadActiveStrategies() {
                 <td>${s.timeframe}</td>
                 <td>${badge}</td>
                 <td>${s.started_at}</td>
-                <td>${actionBtn}</td>
+                <td>${actionBtns}</td>
             </tr>
             `;
         }).join("");
@@ -726,9 +755,56 @@ async function stopStrategy(strategyId) {
         });
         if (res.ok) {
             loadActiveStrategies();
+            loadAccounts();
         }
     } catch (e) {
         console.error("Error stopping strategy:", e);
+    }
+}
+
+async function deleteStrategy(strategyId, strategyName) {
+    const displayName = strategyName || strategyId;
+    if (!confirm(`Biztosan törölni szeretnéd a(z) "${displayName}" stratégiát a rendszerből?`)) {
+        return;
+    }
+    try {
+        const res = await fetch(`/api/active-strategies/${strategyId}`, { method: "DELETE" });
+        if (res.ok) {
+            loadActiveStrategies();
+            loadAccounts();
+        } else {
+            const err = await res.json();
+            alert("Hiba a stratégia törlésekor: " + (err.detail || "Ismeretlen hiba"));
+        }
+    } catch (e) {
+        alert("Hiba: " + e.message);
+    }
+}
+
+async function restartStrategy(strategyId, accountId, symbol, timeframe) {
+    const parts = strategyId.split("_");
+    const strategy_key = parts.length > 2 ? parts.slice(0, -1).join("_") : parts[0];
+    try {
+        const res = await fetch("/api/active-strategies/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                strategy_key,
+                account_id: accountId,
+                symbol,
+                timeframe,
+                volume: 0.1
+            })
+        });
+        if (res.ok) {
+            loadActiveStrategies();
+            loadAccounts();
+        } else {
+            const err = await res.json();
+            alert("Hiba a stratégia újraindításakor: " + (err.detail || "Ismeretlen hiba"));
+        }
+    } catch (e) {
+        alert("Hiba: " + e.message);
     }
 }
 
