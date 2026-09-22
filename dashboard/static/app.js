@@ -1078,34 +1078,47 @@ async function loadMarketStats() {
     }
 }
 
-let downloadCompleteTimeout = null;
+let downloadNotificationTimer = null;
+let activeDownloadInProgress = false;
 
 function updateDownloadProgress(state) {
-    if (!state) return;
-
-    // 1. Data management tab elements
     const box = document.getElementById("download-progress-box");
     const bar = document.getElementById("download-bar-inner");
     const msg = document.getElementById("download-msg");
     const pct = document.getElementById("download-pct");
 
-    // 2. Top header badge elements
     const badge = document.getElementById("auto-download-badge");
     const badgeText = document.getElementById("auto-download-text");
     const badgeDot = document.getElementById("auto-download-dot");
     const headerStopBtn = document.getElementById("header-stop-btn");
+    const tabStopBtn = document.getElementById("tab-stop-btn");
 
+    // Case 1: Empty / Idle state
+    if (!state || (!state.is_running && (!state.message || state.message === "" || state.status === "IDLE"))) {
+        if (!downloadNotificationTimer) {
+            if (box) box.style.display = "none";
+            if (badge) badge.style.display = "none";
+            if (headerStopBtn) headerStopBtn.style.display = "none";
+            if (tabStopBtn) tabStopBtn.style.display = "none";
+        }
+        activeDownloadInProgress = false;
+        return;
+    }
+
+    // Case 2: Actively running download
     if (state.is_running) {
-        if (downloadCompleteTimeout) {
-            clearTimeout(downloadCompleteTimeout);
-            downloadCompleteTimeout = null;
+        activeDownloadInProgress = true;
+        if (downloadNotificationTimer) {
+            clearTimeout(downloadNotificationTimer);
+            downloadNotificationTimer = null;
         }
 
-        // Show data tab box
+        // Show data tab box and stop button
         if (box) box.style.display = "block";
         if (bar) bar.style.width = `${state.percent}%`;
         if (pct) pct.textContent = `${state.percent}%`;
         if (msg) msg.textContent = state.message;
+        if (tabStopBtn) tabStopBtn.style.display = "inline-block";
 
         // Show top header badge with stop button
         if (badge && badgeText) {
@@ -1124,44 +1137,23 @@ function updateDownloadProgress(state) {
             const prefix = state.auto ? "1 ÉVES LETÖLTÉS" : "LETÖLTÉS";
             badgeText.textContent = `${sym}${prefix} (${state.percent}%)`;
         }
-    } else if (state.percent >= 100) {
-        // Completed
-        if (box) box.style.display = "block";
-        if (bar) bar.style.width = "100%";
-        if (pct) pct.textContent = "100%";
-        if (msg) msg.textContent = state.message;
+        return;
+    }
 
-        if (headerStopBtn) headerStopBtn.style.display = "none";
+    // Case 3: Stopped / Completed / Error (Transition from running, or one-shot notification)
+    // Always hide stop buttons immediately!
+    if (headerStopBtn) headerStopBtn.style.display = "none";
+    if (tabStopBtn) tabStopBtn.style.display = "none";
 
-        if (badge && badgeText) {
-            badge.style.display = "inline-flex";
-            badge.style.background = "rgba(34, 197, 94, 0.15)";
-            badge.style.borderColor = "#22c55e";
-            badge.style.color = "#4ade80";
-            if (badgeDot) {
-                badgeDot.style.background = "#22c55e";
-            }
-            const sym = state.symbol ? `[${state.symbol}] ` : "";
-            badgeText.textContent = `✓ ${sym}1 ÉV ADAT KÉSZ`;
-        }
+    const isStopped = state.status === "STOPPED" || (state.message && (state.message.includes("leállítva") || state.message.includes("megszakítva")));
+    const isCompleted = state.status === "COMPLETED" || state.percent >= 100;
+    const isError = state.message && state.message.toLowerCase().includes("hiba");
 
-        if (!downloadCompleteTimeout) {
-            downloadCompleteTimeout = setTimeout(() => {
-                if (badge) badge.style.display = "none";
-                if (box) box.style.display = "none";
-                loadMarketStats();
-                loadHistoricalCoverage();
-                downloadCompleteTimeout = null;
-            }, 8000);
-        }
-    } else if (state.message && (state.message.includes("leállítva") || state.message.includes("megszakítva") || state.message.includes("cancelled"))) {
-        // User cancelled / stopped
+    if (isStopped) {
         if (box) box.style.display = "block";
         if (bar) bar.style.width = "0%";
         if (pct) pct.textContent = "0%";
         if (msg) msg.textContent = state.message;
-
-        if (headerStopBtn) headerStopBtn.style.display = "none";
 
         if (badge && badgeText) {
             badge.style.display = "inline-flex";
@@ -1172,22 +1164,24 @@ function updateDownloadProgress(state) {
             const sym = state.symbol ? `[${state.symbol}] ` : "";
             badgeText.textContent = `✕ ${sym}LETÖLTÉS LEÁLLÍTVA`;
         }
-
-        if (!downloadCompleteTimeout) {
-            downloadCompleteTimeout = setTimeout(() => {
-                if (badge) badge.style.display = "none";
-                if (box) box.style.display = "none";
-                loadMarketStats();
-                loadHistoricalCoverage();
-                downloadCompleteTimeout = null;
-            }, 5000);
-        }
-    } else if (state.message && state.message.toLowerCase().includes("hiba")) {
-        // Error state
+    } else if (isCompleted) {
         if (box) box.style.display = "block";
+        if (bar) bar.style.width = "100%";
+        if (pct) pct.textContent = "100%";
         if (msg) msg.textContent = state.message;
 
-        if (headerStopBtn) headerStopBtn.style.display = "none";
+        if (badge && badgeText) {
+            badge.style.display = "inline-flex";
+            badge.style.background = "rgba(34, 197, 94, 0.15)";
+            badge.style.borderColor = "#22c55e";
+            badge.style.color = "#4ade80";
+            if (badgeDot) badgeDot.style.background = "#22c55e";
+            const sym = state.symbol ? `[${state.symbol}] ` : "";
+            badgeText.textContent = `✓ ${sym}1 ÉV ADAT KÉSZ`;
+        }
+    } else if (isError) {
+        if (box) box.style.display = "block";
+        if (msg) msg.textContent = state.message;
 
         if (badge && badgeText) {
             badge.style.display = "inline-flex";
@@ -1197,15 +1191,20 @@ function updateDownloadProgress(state) {
             if (badgeDot) badgeDot.style.background = "#ef4444";
             badgeText.textContent = `⚠ LETÖLTÉSI HIBA`;
         }
-
-        if (!downloadCompleteTimeout) {
-            downloadCompleteTimeout = setTimeout(() => {
-                if (badge) badge.style.display = "none";
-                if (box) box.style.display = "none";
-                downloadCompleteTimeout = null;
-            }, 8000);
-        }
     }
+
+    if (!downloadNotificationTimer) {
+        downloadNotificationTimer = setTimeout(() => {
+            if (badge) badge.style.display = "none";
+            if (box) box.style.display = "none";
+            if (headerStopBtn) headerStopBtn.style.display = "none";
+            if (tabStopBtn) tabStopBtn.style.display = "none";
+            loadMarketStats();
+            loadHistoricalCoverage();
+            downloadNotificationTimer = null;
+        }, 3000);
+    }
+    activeDownloadInProgress = false;
 }
 
 async function stopHistoricalDownload(e) {
@@ -1217,7 +1216,7 @@ async function stopHistoricalDownload(e) {
     const btnTab = document.getElementById("tab-stop-btn");
     if (btnHeader) {
         btnHeader.disabled = true;
-        btnHeader.textContent = "Leállítás...";
+        btnHeader.textContent = "...";
     }
     if (btnTab) {
         btnTab.disabled = true;
@@ -1232,6 +1231,7 @@ async function stopHistoricalDownload(e) {
         console.log("Download stopped:", data);
         updateDownloadProgress({
             is_running: false,
+            status: "STOPPED",
             percent: 0.0,
             message: data.message || "Letöltés leállítva a felhasználó által."
         });
@@ -1243,10 +1243,12 @@ async function stopHistoricalDownload(e) {
         if (btnHeader) {
             btnHeader.disabled = false;
             btnHeader.textContent = "✕ Leállítás";
+            btnHeader.style.display = "none";
         }
         if (btnTab) {
             btnTab.disabled = false;
             btnTab.textContent = "✕ Letöltés Leállítása";
+            btnTab.style.display = "none";
         }
     }
 }

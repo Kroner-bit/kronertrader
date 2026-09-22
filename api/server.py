@@ -147,8 +147,26 @@ download_state = {
     "percent": 0.0,
     "total_ticks": 0,
     "auto": False,
-    "message": "Nincs aktív letöltés"
+    "status": "IDLE",
+    "message": ""
 }
+
+def reset_download_state():
+    global download_state
+    download_state["is_running"] = False
+    download_state["symbol"] = ""
+    download_state["percent"] = 0.0
+    download_state["total_ticks"] = 0
+    download_state["auto"] = False
+    download_state["status"] = "IDLE"
+    download_state["message"] = ""
+
+def schedule_download_state_reset(delay_sec: float = 3.0):
+    def _delayed():
+        time.sleep(delay_sec)
+        if not download_state.get("is_running", False):
+            reset_download_state()
+    threading.Thread(target=_delayed, daemon=True).start()
 
 def _downloader_worker():
     global download_state
@@ -211,20 +229,26 @@ def _downloader_worker():
 
             if download_cancel_event.is_set():
                 download_state["is_running"] = False
+                download_state["status"] = "STOPPED"
                 download_state["percent"] = 0.0
                 download_state["message"] = f"Letöltés leállítva a felhasználó által ({sym})."
+                schedule_download_state_reset(delay_sec=3.0)
                 print(f"[AutoDownloader] Download cancelled for {sym}.")
             else:
                 download_state["percent"] = 100.0
                 download_state["is_running"] = False
+                download_state["status"] = "COMPLETED"
                 download_state["total_ticks"] = total
                 download_state["message"] = f"✓ {sym} 1 éves historikus adat sikeresen letöltve ({total:,} tick)!"
                 completed_one_year_symbols.add(sym)
+                schedule_download_state_reset(delay_sec=4.0)
                 print(f"[AutoDownloader] Finished download for {sym}: {total:,} ticks stored.")
         except Exception as e:
             print(f"[AutoDownloader] Error downloading {sym}: {e}")
             download_state["is_running"] = False
+            download_state["status"] = "ERROR"
             download_state["message"] = f"Hiba a(z) {sym} letöltése során: {str(e)}"
+            schedule_download_state_reset(delay_sec=5.0)
         finally:
             queued_auto_symbols.discard(sym)
             auto_download_queue.task_done()
@@ -614,8 +638,10 @@ async def stop_download():
     queued_auto_symbols.clear()
 
     download_state["is_running"] = False
+    download_state["status"] = "STOPPED"
     download_state["percent"] = 0.0
     download_state["message"] = "Letöltés leállítva a felhasználó által."
+    schedule_download_state_reset(delay_sec=3.0)
     return {"status": "stopped", "message": "A letöltési folyamat sikeresen leállítva."}
 
 # --- Instruments & Coverage APIs ---
