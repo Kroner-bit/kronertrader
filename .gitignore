@@ -15,6 +15,7 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 temp_dl/
+temp_stitch_*/
 .dukascopy-cache/
 
 # Reports

@@ -41,6 +41,7 @@ from core.instruments import (
 from strategies.loader import get_available_strategies, get_strategy_by_key
 from strategies.live_runner import LiveStrategyRunner
 from backtesting_engine.runner import run_backtest, list_backtest_runs, REPORTS_DIR
+from core.data_gap_filler import download_manager, analyze_symbol_gaps
 
 app = FastAPI(title="Nautilus Trader & Forward-Test Engine")
 
@@ -131,173 +132,44 @@ def get_or_fetch_initial_tick(symbol: str) -> Dict[str, Any]:
         "ask_volume": 1.0
     }
 
-# Auto & Background historical download queue and worker
-auto_download_queue: queue.Queue = queue.Queue()
-queued_auto_symbols: set = set()
-completed_one_year_symbols: set = set()
-user_stopped_symbols: set = set()
-download_cancel_event: threading.Event = threading.Event()
-active_download_proc: List[Any] = [None]
-downloader_worker_thread: Optional[threading.Thread] = None
-
-# Background download state
-download_state = {
-    "is_running": False,
-    "symbol": "",
-    "percent": 0.0,
-    "total_ticks": 0,
-    "auto": False,
-    "status": "IDLE",
-    "message": ""
-}
-
-def reset_download_state():
-    global download_state
-    download_state["is_running"] = False
-    download_state["symbol"] = ""
-    download_state["percent"] = 0.0
-    download_state["total_ticks"] = 0
-    download_state["auto"] = False
-    download_state["status"] = "IDLE"
-    download_state["message"] = ""
-
-def schedule_download_state_reset(delay_sec: float = 3.0):
-    def _delayed():
-        time.sleep(delay_sec)
-        if not download_state.get("is_running", False):
-            reset_download_state()
-    threading.Thread(target=_delayed, daemon=True).start()
-
-def _downloader_worker():
-    global download_state
-    while True:
-        try:
-            item = auto_download_queue.get(timeout=2.0)
-        except queue.Empty:
-            continue
-
-        download_cancel_event.clear()
-        active_download_proc[0] = None
-
-        if isinstance(item, dict):
-            sym = item.get("symbol", "").upper().strip()
-            from_date = item.get("from_date")
-            to_date = item.get("to_date")
-            chunk_days = item.get("chunk_days", 14)
-            is_auto = item.get("auto", True)
-        else:
-            sym = str(item).upper().strip()
-            is_auto = True
-            chunk_days = 14
-            now = datetime.now()
-            to_date = now.strftime("%Y-%m-%d")
-            from_date = (now - timedelta(days=365)).strftime("%Y-%m-%d")
-
-        if not sym or download_cancel_event.is_set():
-            auto_download_queue.task_done()
-            continue
-
-        try:
-            print(f"[AutoDownloader] Starting background 1-year historical download for {sym} ({from_date} -> {to_date})...")
-            download_state["is_running"] = True
-            download_state["symbol"] = sym
-            download_state["percent"] = 0.0
-            download_state["total_ticks"] = 0
-            download_state["auto"] = is_auto
-            download_state["message"] = f"Automatikus 1 éves letöltés indítása ({sym}): {from_date} - {to_date}..."
-
-            def on_progress(p):
-                if download_cancel_event.is_set():
-                    return
-                download_state["percent"] = round(p["percent"], 1)
-                download_state["total_ticks"] = p["total_ticks"]
-                download_state["message"] = (
-                    f"[{sym}] 1 év letöltése: {p['chunk_from']} - {p['chunk_to']} "
-                    f"({p['percent']:.1f}% kész, {p['total_ticks']:,} tick mentve)"
-                )
-
-            total = download_historical_ticks(
-                symbol=sym,
-                from_date=from_date,
-                to_date=to_date,
-                chunk_days=chunk_days,
-                db_path=DB_PATH,
-                progress_callback=on_progress,
-                cancel_check=lambda: download_cancel_event.is_set(),
-                proc_holder=active_download_proc
-            )
-
-            if download_cancel_event.is_set():
-                download_state["is_running"] = False
-                download_state["status"] = "STOPPED"
-                download_state["percent"] = 0.0
-                download_state["message"] = f"Letöltés leállítva a felhasználó által ({sym})."
-                schedule_download_state_reset(delay_sec=3.0)
-                print(f"[AutoDownloader] Download cancelled for {sym}.")
-            else:
-                download_state["percent"] = 100.0
-                download_state["is_running"] = False
-                download_state["status"] = "COMPLETED"
-                download_state["total_ticks"] = total
-                download_state["message"] = f"✓ {sym} 1 éves historikus adat sikeresen letöltve ({total:,} tick)!"
-                completed_one_year_symbols.add(sym)
-                schedule_download_state_reset(delay_sec=4.0)
-                print(f"[AutoDownloader] Finished download for {sym}: {total:,} ticks stored.")
-        except Exception as e:
-            print(f"[AutoDownloader] Error downloading {sym}: {e}")
-            download_state["is_running"] = False
-            download_state["status"] = "ERROR"
-            download_state["message"] = f"Hiba a(z) {sym} letöltése során: {str(e)}"
-            schedule_download_state_reset(delay_sec=5.0)
-        finally:
-            queued_auto_symbols.discard(sym)
-            auto_download_queue.task_done()
-
-def ensure_downloader_running():
-    global downloader_worker_thread
-    if downloader_worker_thread is None or not downloader_worker_thread.is_alive():
-        downloader_worker_thread = threading.Thread(
-            target=_downloader_worker,
-            daemon=True,
-            name="HistoricalDownloaderThread"
-        )
-        downloader_worker_thread.start()
-
-def trigger_auto_download_if_needed(symbol: str):
-    """
-    Checks if symbol already has at least ~1 year (300+ days) of historical tick data in SQLite.
-    If not, and if not already queued, enqueues an automatic 1-year download in background.
-    """
-    s = symbol.upper().strip()
-    if not s:
-        return
-    if s in completed_one_year_symbols:
-        return
-    if s in user_stopped_symbols:
-        return
-    if s in queued_auto_symbols:
-        return
-    try:
-        if has_one_year_coverage(s, DB_PATH):
-            completed_one_year_symbols.add(s)
-            return
-    except Exception as e:
-        print(f"[AutoDownloader] Coverage check error for {s}: {e}")
-        return
-
-    print(f"[AutoDownloader] Aktív stream szimbólumhoz hiányzik az 1 éves adat: {s} -> letöltés sorba állítva!")
-    queued_auto_symbols.add(s)
-    now = datetime.now()
-    to_date = now.strftime("%Y-%m-%d")
-    from_date = (now - timedelta(days=365)).strftime("%Y-%m-%d")
-    auto_download_queue.put({
-        "symbol": s,
-        "from_date": from_date,
-        "to_date": to_date,
-        "chunk_days": 14,
-        "auto": True
-    })
-    ensure_downloader_running()
+def get_current_download_state() -> Dict[str, Any]:
+    state = download_manager.get_state()
+    active = state.get("active_jobs", [])
+    if active:
+        first = active[0]
+        return {
+            "is_running": True,
+            "symbol": first.get("symbol", ""),
+            "percent": first.get("percent", 0.0),
+            "total_ticks": first.get("total_ticks_imported", 0),
+            "auto": False,
+            "status": first.get("status", "RUNNING"),
+            "message": first.get("stitching_status", "Letöltés folyamatban..."),
+            "job_id": first.get("job_id", "")
+        }
+    completed = state.get("completed_jobs", [])
+    if completed:
+        first = completed[0]
+        return {
+            "is_running": False,
+            "symbol": first.get("symbol", ""),
+            "percent": 100.0 if first.get("status") == "COMPLETED" else 0.0,
+            "total_ticks": first.get("total_ticks_imported", 0),
+            "auto": False,
+            "status": first.get("status", "COMPLETED"),
+            "message": first.get("message", ""),
+            "job_id": first.get("job_id", "")
+        }
+    return {
+        "is_running": False,
+        "symbol": "",
+        "percent": 0.0,
+        "total_ticks": 0,
+        "auto": False,
+        "status": "IDLE",
+        "message": "",
+        "job_id": ""
+    }
 
 # --- Pydantic Models ---
 class StreamActionRequest(BaseModel):
@@ -341,6 +213,10 @@ class DownloadRequest(BaseModel):
     from_date: str = "2026-03-01"
     to_date: str = "2026-03-08"
     chunk_days: int = 7
+
+class StartGapDownloadRequest(BaseModel):
+    symbol: str
+    target_days: Optional[int] = 365
 
 # --- Frontend Routes ---
 @app.get("/", response_class=HTMLResponse)
@@ -405,8 +281,6 @@ async def create_account(req: CreateAccountRequest):
                     "ask": tick["ask"],
                     "ticks_session": 0
                 }
-            if sym_clean:
-                trigger_auto_download_if_needed(sym_clean)
 
         # 2. Automatically bind and launch strategy if provided
         if req.strategy_key and req.strategy_symbol:
@@ -582,67 +456,44 @@ async def get_market_stats(symbol: str = "EURUSD"):
         "total_ticks": total_count,
         "latest_tick": latest,
         "spread_pips": spread,
-        "download_state": download_state
+        "download_state": get_current_download_state()
     }
+
+# --- Data Downloads & Smart Gap-Stitching APIs ---
+@app.get("/api/downloads")
+async def get_downloads_state():
+    state = download_manager.get_state()
+    streams_coverage = {}
+    for sym in list(active_streams.keys()):
+        streams_coverage[sym] = download_manager.get_symbol_coverage(sym)
+    state["streams_coverage"] = streams_coverage
+    return state
+
+@app.post("/api/downloads/start")
+async def start_gap_download_endpoint(req: StartGapDownloadRequest):
+    sym = req.symbol.upper().strip()
+    res = download_manager.start_gap_download(sym, target_days=req.target_days or 365)
+    return res
+
+@app.post("/api/downloads/{job_id}/stop")
+async def stop_gap_download_endpoint(job_id: str):
+    success = download_manager.stop_download(job_id)
+    return {"status": "stopping" if success else "not_found", "job_id": job_id}
+
+@app.get("/api/downloads/gaps/{symbol}")
+async def get_symbol_gaps_endpoint(symbol: str):
+    return download_manager.get_symbol_coverage(symbol, force_refresh=True)
 
 @app.post("/api/market/download")
 async def trigger_download(req: DownloadRequest):
-    global download_state
-    if download_state["is_running"]:
-        raise HTTPException(status_code=400, detail="Már fut egy letöltési folyamat a háttérben.")
-
     s = req.symbol.upper().strip()
-    user_stopped_symbols.discard(s)
-    auto_download_queue.put({
-        "symbol": s,
-        "from_date": req.from_date,
-        "to_date": req.to_date,
-        "chunk_days": req.chunk_days or 14,
-        "auto": False
-    })
-    ensure_downloader_running()
-    return {"status": "started", "message": f"Letöltés elindítva a háttérben ({s})."}
+    res = download_manager.start_gap_download(s, target_days=365)
+    return res
 
 @app.post("/api/market/download/stop")
 async def stop_download():
-    global download_state
-    download_cancel_event.set()
-
-    # Mark current symbol as stopped by user
-    cur_sym = download_state.get("symbol", "").upper().strip()
-    if cur_sym:
-        user_stopped_symbols.add(cur_sym)
-
-    # Terminate active subprocess immediately
-    if active_download_proc[0] is not None:
-        try:
-            active_download_proc[0].kill()
-        except Exception as e:
-            print(f"[StopDownload] Error killing subprocess: {e}")
-        active_download_proc[0] = None
-
-    # Clear pending queue and mark them as stopped
-    while not auto_download_queue.empty():
-        try:
-            queued_item = auto_download_queue.get_nowait()
-            if isinstance(queued_item, dict):
-                q_sym = queued_item.get("symbol", "").upper().strip()
-            else:
-                q_sym = str(queued_item).upper().strip()
-            if q_sym:
-                user_stopped_symbols.add(q_sym)
-            auto_download_queue.task_done()
-        except Exception:
-            break
-
-    queued_auto_symbols.clear()
-
-    download_state["is_running"] = False
-    download_state["status"] = "STOPPED"
-    download_state["percent"] = 0.0
-    download_state["message"] = "Letöltés leállítva a felhasználó által."
-    schedule_download_state_reset(delay_sec=3.0)
-    return {"status": "stopped", "message": "A letöltési folyamat sikeresen leállítva."}
+    download_manager.stop_all()
+    return {"status": "stopped", "message": "A letöltési folyamatok leállítása elindítva."}
 
 # --- Instruments & Coverage APIs ---
 @app.get("/api/instruments")
@@ -672,6 +523,25 @@ async def delete_symbol_coverage(symbol: str):
     deleted = delete_symbol_ticks(s, DB_PATH)
     return {"status": "deleted", "symbol": s, "deleted_ticks": deleted}
 
+def _enrich_stream_coverage(stream: Dict[str, Any]) -> Dict[str, Any]:
+    s = dict(stream)
+    sym = s.get("symbol", "").upper().strip()
+    cov = download_manager.get_symbol_coverage(sym)
+    job = next((j for j in download_manager.active_jobs.values() if j.get("symbol") == sym and j.get("status") in ("RUNNING", "STOPPING")), None)
+    s["coverage_info"] = {
+        "has_one_year": cov.get("has_one_year", False),
+        "missing_days": cov.get("missing_days_count", 0),
+        "coverage_pct": cov.get("coverage_pct", 0.0),
+        "present_days": cov.get("present_days_count", 0),
+        "total_ticks": cov.get("total_ticks", 0),
+        "gaps_count": cov.get("total_gaps", 0),
+        "is_downloading": job is not None,
+        "job_status": job.get("status") if job else None,
+        "job_percent": job.get("percent", 0.0) if job else 0.0,
+        "active_job_id": job.get("job_id") if job else None
+    }
+    return s
+
 # --- Multi-Ticker Live Streams Manager ---
 @app.get("/api/market/live-streams")
 async def get_live_streams():
@@ -686,7 +556,7 @@ async def get_live_streams():
             stream["ask"] = tick["ask"]
             stream["last_ts"] = tick["timestamp"]
             stream["last_update"] = datetime.now().strftime("%H:%M:%S")
-        res.append(stream)
+        res.append(_enrich_stream_coverage(stream))
     return res
 
 @app.post("/api/market/live-streams/start")
@@ -706,7 +576,6 @@ async def start_live_stream(req: StreamActionRequest):
         "ask": tick["ask"],
         "ticks_session": 0
     }
-    trigger_auto_download_if_needed(sym)
     return {"status": "started", "symbol": sym}
 
 @app.post("/api/market/live-streams/stop")
@@ -722,9 +591,7 @@ def _get_pip_step(symbol: str) -> float:
 # Startup Hook
 @app.on_event("startup")
 async def on_startup():
-    ensure_downloader_running()
-    for sym in list(active_streams.keys()):
-        trigger_auto_download_if_needed(sym)
+    print("[ServerStartup] Engine started, ready for streaming and downloads.")
 
 # --- Real-time WebSocket Feed ---
 @app.websocket("/ws/live")
@@ -778,9 +645,7 @@ async def websocket_live_endpoint(websocket: WebSocket):
                     if runner.is_running and runner.symbol == sym:
                         runner.on_tick(tick_obj)
 
-            # Check if any active stream needs auto-download
-            for sym in list(active_streams.keys()):
-                trigger_auto_download_if_needed(sym)
+            enriched_streams = [_enrich_stream_coverage(st) for st in active_streams.values()]
 
             accounts = broker.list_accounts()
             for acc in accounts:
@@ -813,7 +678,7 @@ async def websocket_live_endpoint(websocket: WebSocket):
                 "type": "heartbeat",
                 "timestamp": int(datetime.utcnow().timestamp() * 1000),
                 "tick": get_latest_tick("EURUSD", DB_PATH),
-                "active_streams": list(active_streams.values()),
+                "active_streams": enriched_streams,
                 "ticks": ticks_data,
                 "accounts": accounts,
                 "accounts_count": len(accounts),
@@ -821,7 +686,8 @@ async def websocket_live_endpoint(websocket: WebSocket):
                 "trades": trades,
                 "active_strategies": strat_rows,
                 "coverage_count": len(coverage),
-                "download_state": download_state
+                "download_state": get_current_download_state(),
+                "download_jobs": download_manager.get_state()
             }
             await websocket.send_text(json.dumps(msg))
             await asyncio.sleep(1.0)

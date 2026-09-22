@@ -44,6 +44,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadMarketStats();
     loadHistoricalCoverage();
     loadLiveStreams();
+    loadDownloadsTab();
 
     window.addEventListener("resize", () => {
         renderAllSquareCharts();
@@ -57,6 +58,7 @@ document.addEventListener("DOMContentLoaded", () => {
             loadTrades();
             loadAccounts();
             loadActiveStrategies();
+            loadDownloadsTab();
         }
     }, 2000);
 });
@@ -86,6 +88,9 @@ function initNavigation() {
                 loadMarketStats();
                 loadHistoricalCoverage();
                 loadLiveStreams();
+            }
+            if (target === "downloads-tab") {
+                loadDownloadsTab();
             }
         });
     });
@@ -145,6 +150,9 @@ function initWebSocket() {
             }
             if (data.download_state) {
                 updateDownloadProgress(data.download_state);
+            }
+            if (data.download_jobs) {
+                renderDownloadsTabFromWs(data.download_jobs, data.active_streams);
             }
         } catch (e) {
             console.error("WS error:", e);
@@ -228,6 +236,11 @@ async function loadInstruments() {
         if (newAccSymbol) {
             newAccSymbol.innerHTML = optionsHtml;
             newAccSymbol.value = "EURUSD";
+        }
+        const manualDlSymbol = document.getElementById("manual-dl-symbol");
+        if (manualDlSymbol) {
+            manualDlSymbol.innerHTML = optionsHtml;
+            manualDlSymbol.value = "EURUSD";
         }
     } catch (e) {
         console.error("Error loading instruments:", e);
@@ -492,7 +505,7 @@ function renderLiveStreamsTable(streams) {
     if (!tbody) return;
 
     if (!streams || streams.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="text-muted" style="text-align:center;">Jelenleg nincs aktív élő stream feliratkozás.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="text-muted" style="text-align:center;">Jelenleg nincs aktív élő stream feliratkozás.</td></tr>`;
         return;
     }
 
@@ -502,6 +515,33 @@ function renderLiveStreamsTable(streams) {
         const ask = s.ask ? parseFloat(s.ask).toFixed(spec.digits) : "-";
         const spread = (s.bid && s.ask) ? ((parseFloat(s.ask) - parseFloat(s.bid)) * spec.mult).toFixed(1) + " " + spec.unit : "-";
 
+        const cov = s.coverage_info;
+        let coverageCell = '';
+        if (cov && cov.is_downloading) {
+            coverageCell = `
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid #3b82f6; padding: 2px 6px; font-size: 11px;">
+                        <span class="pulsing-dot" style="background: #3b82f6; width: 6px; height: 6px; display: inline-block;"></span>
+                        Foltozás: ${(cov.job_percent || 0).toFixed(1)}%
+                    </span>
+                    <button class="btn btn-secondary btn-sm" onclick="stopDownloadJob('${cov.active_job_id || s.symbol}')" style="color: #f87171; border-color: #ef4444; padding: 1px 6px; font-size: 10px;" title="Letöltés leállítása">✕</button>
+                </div>
+            `;
+        } else if (cov && cov.has_one_year) {
+            coverageCell = `
+                <span class="badge" style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid #22c55e; padding: 2px 6px; font-size: 11px;">
+                    ✓ 1 Év Megvan (${cov.coverage_pct}%)
+                </span>
+            `;
+        } else {
+            const missingDays = cov ? cov.missing_days : 365;
+            coverageCell = `
+                <button class="btn btn-primary btn-sm" onclick="startGapDownload('${s.symbol}')" style="background: #2563eb; color: #fff; padding: 3px 8px; font-size: 11px; display: inline-flex; align-items: center; gap: 4px;" title="Hiányzó adatok letöltése és foltozása">
+                    📥 1 Év Letöltése <span style="opacity: 0.85; font-size: 10px;">(${missingDays} nap hiány)</span>
+                </button>
+            `;
+        }
+
         return `
         <tr>
             <td><strong>${s.symbol}</strong></td>
@@ -509,6 +549,7 @@ function renderLiveStreamsTable(streams) {
             <td class="val-green"><code>${bid}</code></td>
             <td class="val-red"><code>${ask}</code></td>
             <td>${spread}</td>
+            <td>${coverageCell}</td>
             <td>${s.last_update || '-'}</td>
             <td>
                 <span class="status-badge status-live">
@@ -1299,4 +1340,265 @@ function openBacktestTab(strategyKey) {
     if (tab) tab.click();
     const select = document.getElementById("bt-strategy");
     if (select) select.value = strategyKey;
+}
+
+// ==========================================================================
+// Downloads & Smart Data Stitcher Manager (Independent background threads,
+// gap filling, duplicate-free SQLite stitching, per-job cancellation)
+// ==========================================================================
+
+async function loadDownloadsTab() {
+    try {
+        const res = await fetch("/api/downloads");
+        const data = await res.json();
+        renderActiveDownloadJobs(data.active_jobs || []);
+        renderCompletedDownloadJobs(data.completed_jobs || []);
+        renderStreamsCoverageTable(data.streams_coverage || {});
+    } catch (e) {
+        console.error("Error loading downloads tab:", e);
+    }
+}
+
+function renderDownloadsTabFromWs(downloadJobs, activeStreams) {
+    if (!downloadJobs) return;
+    renderActiveDownloadJobs(downloadJobs.active_jobs || []);
+    renderCompletedDownloadJobs(downloadJobs.completed_jobs || []);
+
+    const activeTab = document.querySelector(".nav-tab.active");
+    if (activeTab && activeTab.getAttribute("data-tab") === "downloads-tab") {
+        const coverageMap = {};
+        if (activeStreams) {
+            activeStreams.forEach(s => {
+                if (s.coverage_info) {
+                    coverageMap[s.symbol] = {
+                        symbol: s.symbol,
+                        name: s.name,
+                        has_one_year: s.coverage_info.has_one_year,
+                        missing_days_count: s.coverage_info.missing_days,
+                        coverage_pct: s.coverage_info.coverage_pct,
+                        total_ticks: s.coverage_info.total_ticks,
+                        present_days_count: s.coverage_info.present_days,
+                        total_gaps: s.coverage_info.gaps_count,
+                        is_downloading: s.coverage_info.is_downloading,
+                        job_percent: s.coverage_info.job_percent,
+                        active_job_id: s.coverage_info.active_job_id
+                    };
+                }
+            });
+        }
+        if (Object.keys(coverageMap).length > 0) {
+            renderStreamsCoverageTable(coverageMap);
+        }
+    }
+}
+
+function renderActiveDownloadJobs(jobs) {
+    const container = document.getElementById("active-downloads-container");
+    const countBadge = document.getElementById("active-jobs-count-badge");
+    if (countBadge) {
+        countBadge.textContent = `${jobs.length} aktív`;
+        countBadge.style.background = jobs.length > 0 ? "rgba(59, 130, 246, 0.25)" : "rgba(100, 116, 139, 0.2)";
+        countBadge.style.color = jobs.length > 0 ? "#60a5fa" : "var(--text-muted)";
+    }
+    if (!container) return;
+
+    if (!jobs || jobs.length === 0) {
+        container.innerHTML = `
+            <div class="card" style="padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px;">
+                Jelenleg nincs aktív letöltési folyamat a háttérben. Indíts egyet a Live Stream listából vagy a fenti gombbal!
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = jobs.map(j => {
+        const pct = (j.percent || 0).toFixed(1);
+        const ticksImported = (j.total_ticks_imported || 0).toLocaleString();
+        const isStopping = j.status === "STOPPING";
+        const statusBadge = isStopping
+            ? `<span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid #f59e0b; padding: 2px 6px; font-size: 11px;">LEÁLLÍTÁS...</span>`
+            : `<span class="badge" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid #3b82f6; padding: 2px 6px; font-size: 11px;"><span class="pulsing-dot" style="background:#3b82f6; width:6px; height:6px; display:inline-block; margin-right:4px;"></span>FOLTOZÁS</span>`;
+
+        return `
+        <div class="card" style="margin-bottom: 12px; border-left: 3px solid #3b82f6;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span class="card-tag" style="font-size: 13px; font-weight: 700;">${j.symbol}</span>
+                    ${statusBadge}
+                    <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Indítva: ${j.started_at || '-'}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: #60a5fa;">${pct}%</span>
+                    <button class="btn btn-danger btn-sm" onclick="stopDownloadJob('${j.job_id}')" ${isStopping ? 'disabled' : ''} style="padding: 3px 8px; font-size: 11px;">
+                        ${isStopping ? 'Leállítás...' : '✕ Leállítás'}
+                    </button>
+                </div>
+            </div>
+
+            <!-- Progress bar -->
+            <div class="progress-bar-wrap" style="height: 6px; margin-bottom: 8px; background: rgba(255,255,255,0.05);">
+                <div class="progress-bar-inner" style="width: ${pct}%; height: 100%; background: #3b82f6;"></div>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono);">
+                <div>
+                    <span style="color: var(--text-muted);">Állapot:</span>
+                    <span>${j.stitching_status || 'Foltozás...'}</span>
+                </div>
+                <div>
+                    <span style="color: var(--text-muted);">Illesztett tickek:</span>
+                    <strong class="val-cyan">${ticksImported} db</strong>
+                </div>
+            </div>
+        </div>
+        `;
+    }).join("");
+}
+
+function renderStreamsCoverageTable(streamsCoverage) {
+    const tbody = document.getElementById("streams-coverage-body");
+    if (!tbody) return;
+
+    const entries = Object.entries(streamsCoverage);
+    if (entries.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="text-muted" style="text-align:center;">Nincs aktív live stream szimbólum.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = entries.map(([sym, cov]) => {
+        const meta = (allInstruments || []).find(i => i.symbol === sym);
+        const name = meta ? meta.name : (cov.name || sym);
+        const totalTicks = (cov.total_ticks || 0).toLocaleString();
+        const dateRange = (cov.min_date && cov.max_date && cov.min_date !== "-") ? `${cov.min_date} -> ${cov.max_date}` : "Nincs adat";
+        const spanDays = cov.actual_span_days || 0;
+        const missingDays = cov.missing_days_count !== undefined ? cov.missing_days_count : 365;
+
+        let statusBadge = '';
+        let actionBtn = '';
+
+        if (cov.is_downloading) {
+            statusBadge = `
+                <span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid #3b82f6; padding: 2px 6px; font-size: 11px;">
+                    <span class="pulsing-dot" style="background: #3b82f6; width: 6px; height: 6px; display: inline-block; margin-right:4px;"></span>
+                    Folyamatban (${(cov.job_percent || 0).toFixed(1)}%)
+                </span>
+            `;
+            actionBtn = `
+                <button class="btn btn-secondary btn-sm" onclick="stopDownloadJob('${cov.active_job_id || sym}')" style="color: #f87171; border-color: #ef4444; padding: 2px 8px; font-size: 11px;">
+                    ✕ Leállítás
+                </button>
+            `;
+        } else if (cov.has_one_year) {
+            statusBadge = `
+                <span class="badge" style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid #22c55e; padding: 2px 6px; font-size: 11px;">
+                    ✓ 1 Év Megvan (${cov.coverage_pct}%)
+                </span>
+            `;
+            actionBtn = `
+                <button class="btn btn-secondary btn-sm" onclick="startGapDownload('${sym}', 365)" style="padding: 2px 8px; font-size: 11px;">
+                    Újraellenőrzés
+                </button>
+            `;
+        } else {
+            statusBadge = `
+                <span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid #f59e0b; padding: 2px 6px; font-size: 11px;">
+                    Hiányos (${cov.coverage_pct}%)
+                </span>
+            `;
+            actionBtn = `
+                <button class="btn btn-primary btn-sm" onclick="startGapDownload('${sym}', 365)" style="padding: 2px 8px; font-size: 11px; display: inline-flex; align-items: center; gap: 4px;">
+                    📥 1 Év Foltozása (${missingDays} nap)
+                </button>
+            `;
+        }
+
+        return `
+        <tr>
+            <td><strong>${sym}</strong></td>
+            <td>${name}</td>
+            <td><strong class="val-cyan">${totalTicks}</strong></td>
+            <td><code>${dateRange}</code></td>
+            <td><span class="card-tag">${spanDays} nap</span></td>
+            <td><strong class="${missingDays > 5 ? 'val-red' : 'val-green'}">${missingDays} nap</strong></td>
+            <td>${statusBadge}</td>
+            <td>${actionBtn}</td>
+        </tr>
+        `;
+    }).join("");
+}
+
+function renderCompletedDownloadJobs(completedJobs) {
+    const tbody = document.getElementById("completed-downloads-body");
+    if (!tbody) return;
+
+    if (!completedJobs || completedJobs.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="text-muted" style="text-align:center;">Még nem fejeződött be letöltés ebben a munkamenetben.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = completedJobs.map(c => {
+        let badge = '';
+        if (c.status === "COMPLETED") {
+            badge = `<span class="badge" style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid #22c55e; padding: 2px 6px; font-size: 11px;">✓ BEFEJEZVE</span>`;
+        } else if (c.status === "STOPPED") {
+            badge = `<span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid #f59e0b; padding: 2px 6px; font-size: 11px;">✕ LEÁLLÍTVA</span>`;
+        } else {
+            badge = `<span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid #ef4444; padding: 2px 6px; font-size: 11px;">⚠ HIBA</span>`;
+        }
+
+        return `
+        <tr>
+            <td><code style="font-size: 10px;">${c.job_id}</code></td>
+            <td><strong>${c.symbol}</strong></td>
+            <td>${badge}</td>
+            <td><strong class="val-cyan">+${(c.total_ticks_imported || 0).toLocaleString()}</strong></td>
+            <td>${(c.total_ticks_in_db || 0).toLocaleString()}</td>
+            <td>${c.duration_days ? c.duration_days + ' nap' : '-'}</td>
+            <td>${c.completed_at || '-'}</td>
+            <td style="font-size: 11px;">${c.message || 'Sikeresen illesztve.'}</td>
+        </tr>
+        `;
+    }).join("");
+}
+
+async function startGapDownload(symbol, targetDays = 365) {
+    try {
+        const res = await fetch("/api/downloads/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ symbol: symbol, target_days: targetDays })
+        });
+        const data = await res.json();
+        console.log("Gap download triggered:", data);
+        loadDownloadsTab();
+        loadLiveStreams();
+    } catch (e) {
+        alert("Hiba a letöltés indításakor: " + e.message);
+    }
+}
+
+async function stopDownloadJob(jobId) {
+    try {
+        const res = await fetch(`/api/downloads/${jobId}/stop`, {
+            method: "POST"
+        });
+        const data = await res.json();
+        console.log("Job stop triggered:", data);
+        loadDownloadsTab();
+        loadLiveStreams();
+    } catch (e) {
+        console.error("Error stopping job:", e);
+    }
+}
+
+async function handleManualGapDownload(e) {
+    e.preventDefault();
+    const symbol = document.getElementById("manual-dl-symbol").value;
+    const days = parseInt(document.getElementById("manual-dl-days").value || "365", 10);
+    closeModal("modal-manual-download");
+
+    const tab = document.querySelector('[data-tab="downloads-tab"]');
+    if (tab) tab.click();
+
+    await startGapDownload(symbol, days);
 }

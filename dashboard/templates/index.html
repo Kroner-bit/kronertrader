@@ -37,6 +37,7 @@
         <button class="nav-tab" data-tab="backtest-tab">Backtest Központ</button>
         <button class="nav-tab" data-tab="catalog-tab">Stratégia Katalógus</button>
         <button class="nav-tab" data-tab="data-tab">Élő Stream &amp; Történeti Adatok</button>
+        <button class="nav-tab" data-tab="downloads-tab">📥 Letöltések &amp; Adatfoltozó</button>
     </nav>
 
     <!-- Main Workspace -->
@@ -267,6 +268,7 @@
                             <th>Élő Bid</th>
                             <th>Élő Ask</th>
                             <th>Spread</th>
+                            <th>1 Éves Historikus Lefedettség</th>
                             <th>Utolsó Frissülés</th>
                             <th>Állapot</th>
                             <th>Művelet</th>
@@ -348,6 +350,93 @@
                         </button>
                     </div>
                 </div>
+            </div>
+        </section>
+
+        <!-- 7. DOWNLOADS & SMART DATA STITCHER TAB -->
+        <section id="downloads-tab" class="tab-pane">
+            <div class="section-header">
+                <div>
+                    <h2 class="section-title">Historikus Letöltések &amp; Intelligens Adatfoltozó</h2>
+                    <p class="section-desc">Párhuzamos háttérfolyamatok szimbólumonkénti lyuk-elemzéssel (Gap Analysis), duplikációmentes SQLite illesztéssel és azonnali megszakítási támogatással.</p>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn btn-secondary" onclick="loadDownloadsTab()">Frissítés</button>
+                    <button class="btn btn-primary" onclick="openModal('modal-manual-download')">+ Ticker Foltozása</button>
+                </div>
+            </div>
+
+            <!-- 1. Active Running Downloads -->
+            <div class="section-header" style="margin-top: 16px;">
+                <div>
+                    <h3 class="section-title" style="display: flex; align-items: center; gap: 8px;">
+                        <span>Éppen Futó Letöltések</span>
+                        <span id="active-jobs-count-badge" class="badge" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid #3b82f6; font-size: 11px; padding: 2px 6px;">0 aktív</span>
+                    </h3>
+                    <p class="section-desc">Valós idejű előrehaladás, aktuális lyuk-foltozási blokk és azonnali leállítási lehetőség.</p>
+                </div>
+            </div>
+
+            <div id="active-downloads-container">
+                <div class="card" style="padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px;">
+                    Jelenleg nincs aktív letöltési folyamat a háttérben. Indíts egyet az alábbi listából!
+                </div>
+            </div>
+
+            <!-- 2. Active Streams Coverage Overview -->
+            <div class="section-header" style="margin-top: 28px;">
+                <div>
+                    <h3 class="section-title">Aktív Live Streamek 1 Éves Lefedettsége</h3>
+                    <p class="section-desc">A közvetített tickerek adatbázis-lefedettsége és hiányzó intervallumai.</p>
+                </div>
+            </div>
+
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Ticker</th>
+                            <th>Név</th>
+                            <th>Összes Tick a DB-ben</th>
+                            <th>Elérhető Időszak</th>
+                            <th>Időtartam (nap)</th>
+                            <th>Hiányzó Kereskedési Napok</th>
+                            <th>1 Éves Állapot</th>
+                            <th>Művelet</th>
+                        </tr>
+                    </thead>
+                    <tbody id="streams-coverage-body">
+                        <!-- Dynamically populated -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 3. Completed & Stopped History Log -->
+            <div class="section-header" style="margin-top: 28px;">
+                <div>
+                    <h3 class="section-title">Adatillesztési &amp; Letöltési Napló</h3>
+                    <p class="section-desc">A befejezett vagy felhasználó által leállított foltozások audit naplója (részleges adatok is hitelesítve és illesztve).</p>
+                </div>
+            </div>
+
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Job ID</th>
+                            <th>Ticker</th>
+                            <th>Állapot</th>
+                            <th>Beillesztett Új Tickek</th>
+                            <th>Összes Tick a DB-ben</th>
+                            <th>Időtartam (nap)</th>
+                            <th>Befejezve ekkor</th>
+                            <th>Hitelesítés &amp; Eredmény</th>
+                        </tr>
+                    </thead>
+                    <tbody id="completed-downloads-body">
+                        <!-- Dynamically populated -->
+                    </tbody>
+                </table>
             </div>
         </section>
 
@@ -492,6 +581,34 @@
                     A kiválasztott ticker folyamatos élő feedet kap a belső WebSocket csatornán keresztül és megjelenik az Élő Kocka Grafikonok fülön is.
                 </p>
                 <button type="submit" class="btn btn-primary" style="width: 100%;">Stream Elindítása</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Manual Gap Download -->
+    <div class="modal-backdrop" id="modal-manual-download">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Intelligens Adatfoltozás Indítása</h3>
+                <button class="modal-close" onclick="closeModal('modal-manual-download')">&times;</button>
+            </div>
+            <form onsubmit="handleManualGapDownload(event)">
+                <div class="form-group">
+                    <label class="form-label">Ticker Szimbólum</label>
+                    <select class="form-control" id="manual-dl-symbol" required></select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Időtáv Visszamenőleg</label>
+                    <select class="form-control" id="manual-dl-days">
+                        <option value="365" selected>1 Év (365 nap)</option>
+                        <option value="180">Fél év (180 nap)</option>
+                        <option value="730">2 Év (730 nap)</option>
+                    </select>
+                </div>
+                <p class="section-desc" style="margin-bottom: 14px;">
+                    A rendszer megvizsgálja a már letöltött adatokat, kiszámítja a hiányzó lyukakat, és kizárólag a hiányzó napokat tölti le a háttérben duplikációmentesen.
+                </p>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Adatfoltozás Indítása a Háttérben</button>
             </form>
         </div>
     </div>

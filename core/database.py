@@ -32,6 +32,7 @@ def init_db(db_path: str = DB_PATH):
     );
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ticks_sym_ts ON ticks(symbol, timestamp);")
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ticks_unique ON ticks(symbol, timestamp, bid, ask);")
 
     # 2. Demo accounts
     cursor.execute("""
@@ -165,7 +166,7 @@ def insert_ticks_batch(ticks: List[tuple], db_path: str = DB_PATH):
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
     cursor.executemany("""
-    INSERT INTO ticks (timestamp, symbol, bid, ask, bid_volume, ask_volume)
+    INSERT OR IGNORE INTO ticks (timestamp, symbol, bid, ask, bid_volume, ask_volume)
     VALUES (?, ?, ?, ?, ?, ?);
     """, ticks)
     conn.commit()
@@ -271,6 +272,21 @@ def has_one_year_coverage(symbol: str, db_path: str = DB_PATH) -> bool:
         return False
     days = (max_ts - min_ts) / (1000 * 86400)
     return days >= 300
+
+def get_symbol_date_ranges(symbol: str, db_path: str = DB_PATH) -> List[Dict[str, Any]]:
+    """Returns all distinct calendar dates and tick counts present in SQLite for a symbol."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT DISTINCT date(timestamp / 1000, 'unixepoch') as d, count(*) as cnt
+    FROM ticks
+    WHERE symbol = ?
+    GROUP BY d
+    ORDER BY d;
+    """, (symbol.upper().strip(),))
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"date": r["d"], "ticks": r["cnt"]} for r in rows]
 
 if __name__ == "__main__":
     init_db()
