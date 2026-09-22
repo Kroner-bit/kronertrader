@@ -27,6 +27,7 @@
     <!-- Navigation Toolbar -->
     <nav class="nav-tabs">
         <button class="nav-tab active" data-tab="accounts-tab">Portfólió &amp; Demó Számlák</button>
+        <button class="nav-tab" data-tab="charts-tab">Élő Kocka Grafikonok</button>
         <button class="nav-tab" data-tab="active-tab">Aktív Stratégiák</button>
         <button class="nav-tab" data-tab="backtest-tab">Backtest Központ</button>
         <button class="nav-tab" data-tab="catalog-tab">Stratégia Katalógus</button>
@@ -104,7 +105,26 @@
             </div>
         </section>
 
-        <!-- 2. ACTIVE STRATEGIES TAB -->
+        <!-- 2. LIVE SQUARE CHARTS TAB -->
+        <section id="charts-tab" class="tab-pane">
+            <div class="section-header">
+                <div>
+                    <h2 class="section-title">Streamelt Instrumentumok (Élő Bid / Ask Vonaldiagram)</h2>
+                    <p class="section-desc">Folyamatos valós idejű mikrotick árváltozások az utolsó 10 árváltozás megjelenítésével.</p>
+                </div>
+                <div style="display: flex; gap: 14px; align-items: center;">
+                    <span style="font-size: 11px; font-family: var(--font-mono); color: var(--accent-green-bright); font-weight: 700;">● BID (VÉTEL)</span>
+                    <span style="font-size: 11px; font-family: var(--font-mono); color: var(--accent-red-bright); font-weight: 700;">● ASK (ELADÁS)</span>
+                    <button class="btn btn-secondary btn-sm" onclick="openModal('modal-add-stream')">+ Ticker Hozzáadása</button>
+                </div>
+            </div>
+
+            <div class="stream-charts-grid" id="stream-charts-grid">
+                <!-- Dynamically populated square charts -->
+            </div>
+        </section>
+
+        <!-- 3. ACTIVE STRATEGIES TAB -->
         <section id="active-tab" class="tab-pane">
             <div class="section-header">
                 <div>
@@ -134,7 +154,7 @@
             </div>
         </section>
 
-        <!-- 3. BACKTEST HUB TAB -->
+        <!-- 4. BACKTEST HUB TAB -->
         <section id="backtest-tab" class="tab-pane">
             <div class="section-header">
                 <div>
@@ -169,6 +189,14 @@
                             <label class="form-label">Kezdőtőke ($)</label>
                             <input type="number" class="form-control" id="bt-cash" value="10000" step="500">
                         </div>
+                        <div class="form-group">
+                            <label class="form-label">Kezdő Dátum (Opcionális)</label>
+                            <input type="date" class="form-control" id="bt-from">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Záró Dátum (Opcionális)</label>
+                            <input type="date" class="form-control" id="bt-to">
+                        </div>
                     </div>
                     <button type="submit" class="btn btn-primary" id="btn-run-backtest">Visszateszt Futtatása (Bokeh Riport)</button>
                 </form>
@@ -199,7 +227,7 @@
             </div>
         </section>
 
-        <!-- 4. STRATEGY CATALOG TAB -->
+        <!-- 5. STRATEGY CATALOG TAB -->
         <section id="catalog-tab" class="tab-pane">
             <div class="section-header">
                 <div>
@@ -213,7 +241,7 @@
             </div>
         </section>
 
-        <!-- 5. LIVE STREAMS & HISTORICAL DATA TAB -->
+        <!-- 6. LIVE STREAMS & HISTORICAL DATA TAB -->
         <section id="data-tab" class="tab-pane">
             
             <!-- Live Streamed Tickers Section -->
@@ -315,36 +343,86 @@
 
     </main>
 
-    <!-- Modal: Create Account -->
+    <!-- Modal: Create Account (Enhanced with WebSocket Streams & Strategy binding) -->
     <div class="modal-backdrop" id="modal-account">
-        <div class="modal">
+        <div class="modal" style="max-width: 580px;">
             <div class="modal-header">
                 <h3>Új Demó Számla Létrehozása</h3>
                 <button class="modal-close" onclick="closeModal('modal-account')">&times;</button>
             </div>
             <form onsubmit="createNewAccount(event)">
-                <div class="form-group">
-                    <label class="form-label">Számla Azonosító (pl. demo_scalper)</label>
-                    <input class="form-control" id="new-acc-id" required placeholder="demo_1">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="form-group">
+                        <label class="form-label">Számla Azonosító</label>
+                        <input class="form-control" id="new-acc-id" required placeholder="demo_1">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Számla Megnevezése</label>
+                        <input class="form-control" id="new-acc-name" required placeholder="Fő Demó Számla">
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Számla Megnevezése</label>
-                    <input class="form-control" id="new-acc-name" required placeholder="Fő Kereskedési Demó">
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="form-group">
+                        <label class="form-label">Kezdőtőke ($ USD)</label>
+                        <input type="number" class="form-control" id="new-acc-balance" value="10000" step="500">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Tőkeáttétel</label>
+                        <select class="form-control" id="new-acc-leverage">
+                            <option value="50">1:50</option>
+                            <option value="100" selected>1:100</option>
+                            <option value="200">1:200</option>
+                            <option value="500">1:500</option>
+                        </select>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Kezdőtőke ($ USD)</label>
-                    <input type="number" class="form-control" id="new-acc-balance" value="10000" step="500">
+
+                <!-- Section: WebSocket Streamed Instruments -->
+                <div class="form-group" style="margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--border-subtle);">
+                    <label class="form-label">WebSocketen Streamelendő Instrumentumok</label>
+                    <p class="section-desc" style="margin-bottom: 8px;">Jelöld be, mely devizapárok kapjanak élő feedet a számlához:</p>
+                    <div class="stream-chips-container" id="stream-chips-container">
+                        <label class="chip-item"><input type="checkbox" name="stream_pair" value="EURUSD" checked> EURUSD</label>
+                        <label class="chip-item"><input type="checkbox" name="stream_pair" value="GBPUSD" checked> GBPUSD</label>
+                        <label class="chip-item"><input type="checkbox" name="stream_pair" value="USDJPY" checked> USDJPY</label>
+                        <label class="chip-item"><input type="checkbox" name="stream_pair" value="USDCHF"> USDCHF</label>
+                        <label class="chip-item"><input type="checkbox" name="stream_pair" value="USDCAD"> USDCAD</label>
+                        <label class="chip-item"><input type="checkbox" name="stream_pair" value="AUDUSD"> AUDUSD</label>
+                        <label class="chip-item"><input type="checkbox" name="stream_pair" value="BTCUSD"> BTCUSD</label>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Tőkeáttétel</label>
-                    <select class="form-control" id="new-acc-leverage">
-                        <option value="50">1:50</option>
-                        <option value="100" selected>1:100</option>
-                        <option value="200">1:200</option>
-                        <option value="500">1:500</option>
-                    </select>
+
+                <!-- Section: Strategy Assignment -->
+                <div class="form-group" style="margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--border-subtle);">
+                    <label class="form-label">Kereskedendő Stratégia a Demó Számlán</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px;">
+                        <div>
+                            <label class="form-label" style="font-size: 9px;">Stratégia</label>
+                            <select class="form-control" id="new-acc-strategy" required></select>
+                        </div>
+                        <div>
+                            <label class="form-label" style="font-size: 9px;">Kereskedendő Pár</label>
+                            <select class="form-control" id="new-acc-symbol" required></select>
+                        </div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px;">
+                        <div>
+                            <label class="form-label" style="font-size: 9px;">Idősík</label>
+                            <select class="form-control" id="new-acc-timeframe">
+                                <option value="1m" selected>1 perc (1m)</option>
+                                <option value="5m">5 perc (5m)</option>
+                                <option value="15m">15 perc (15m)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="form-label" style="font-size: 9px;">Kötési Méret (Lot)</label>
+                            <input type="number" class="form-control" id="new-acc-volume" value="0.1" step="0.01" min="0.01">
+                        </div>
+                    </div>
                 </div>
-                <button type="submit" class="btn btn-primary" style="width: 100%;">Létrehozás</button>
+
+                <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 14px;">Demó Számla Létrehozása &amp; Stratégia Indítása</button>
             </form>
         </div>
     </div>
@@ -401,7 +479,7 @@
                     <select class="form-control" id="stream-ticker-select" required></select>
                 </div>
                 <p class="section-desc" style="margin-bottom: 14px;">
-                    A kiválasztott ticker folyamatos élő feedet kap a belső WebSocket csatornán keresztül és az érkező tickeket az SQLite automatikusan rögzíti.
+                    A kiválasztott ticker folyamatos élő feedet kap a belső WebSocket csatornán keresztül és megjelenik az Élő Kocka Grafikonok fülön is.
                 </p>
                 <button type="submit" class="btn btn-primary" style="width: 100%;">Stream Elindítása</button>
             </form>

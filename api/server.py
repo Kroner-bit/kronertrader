@@ -1,5 +1,7 @@
 import os
 import sys
+import time
+import random
 import asyncio
 import json
 import threading
@@ -75,12 +77,16 @@ class StreamActionRequest(BaseModel):
     symbol: str
 
 class CreateAccountRequest(BaseModel):
-
     id: str
     name: str
     initial_balance: float = 10000.0
     currency: str = "USD"
     leverage: int = 100
+    stream_symbols: Optional[List[str]] = []
+    strategy_key: Optional[str] = None
+    strategy_symbol: Optional[str] = None
+    strategy_timeframe: Optional[str] = "1m"
+    strategy_volume: Optional[float] = 0.1
 
 class StartStrategyRequest(BaseModel):
     strategy_key: str
@@ -129,6 +135,12 @@ async def get_accounts():
     for acc in accounts:
         perf = broker.get_performance(acc["id"])
         acc.update(perf)
+        active_for_acc = [
+            {"strategy": r.strategy_key, "symbol": r.symbol, "timeframe": r.timeframe}
+            for r in active_runners.values()
+            if r.account_id == acc["id"] and r.is_running
+        ]
+        acc["active_strategies"] = active_for_acc
     return accounts
 
 @app.post("/api/accounts")
@@ -141,6 +153,47 @@ async def create_account(req: CreateAccountRequest):
             currency=req.currency,
             leverage=req.leverage
         )
+
+        # 1. Register requested stream symbols into active_streams
+        symbols_to_stream = set(req.stream_symbols or [])
+        if req.strategy_symbol:
+            symbols_to_stream.add(req.strategy_symbol)
+
+        for sym in symbols_to_stream:
+            sym_clean = sym.upper().strip()
+            if sym_clean and sym_clean not in active_streams:
+                meta = get_instrument_by_symbol(sym_clean)
+                name = meta["name"] if meta else sym_clean
+                tick = get_latest_tick(sym_clean, DB_PATH)
+                base_bid = tick["bid"] if tick else 1.1000
+                base_ask = tick["ask"] if tick else 1.1002
+                active_streams[sym_clean] = {
+                    "symbol": sym_clean,
+                    "name": name,
+                    "status": "STREAMING",
+                    "last_ts": tick["timestamp"] if tick else int(time.time() * 1000),
+                    "last_update": datetime.now().strftime("%H:%M:%S"),
+                    "bid": base_bid,
+                    "ask": base_ask,
+                    "ticks_session": 0
+                }
+
+        # 2. Automatically bind and launch strategy if provided
+        if req.strategy_key and req.strategy_symbol:
+            strat_sym = req.strategy_symbol.upper().strip()
+            runner_key = f"{req.strategy_key}_{req.id}"
+            if runner_key not in active_runners or not active_runners[runner_key].is_running:
+                runner = LiveStrategyRunner(
+                    strategy_key=req.strategy_key,
+                    account_id=req.id,
+                    symbol=strat_sym,
+                    timeframe=req.strategy_timeframe or "1m",
+                    volume=req.strategy_volume or 0.1,
+                    db_path=DB_PATH
+                )
+                runner.start()
+                active_runners[runner_key] = runner
+
         return acc
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -362,6 +415,14 @@ async def stop_live_stream(req: StreamActionRequest):
         del active_streams[sym]
     return {"status": "stopped", "symbol": sym}
 
+def _get_pip_step(symbol: str) -> float:
+    s = symbol.upper()
+    if "JPY" in s:
+        return 0.01
+    elif "BTC" in s:
+        return 1.0
+    return 0.0001
+
 # --- Real-time WebSocket Feed ---
 @app.websocket("/ws/live")
 async def websocket_live_endpoint(websocket: WebSocket):
@@ -372,18 +433,43 @@ async def websocket_live_endpoint(websocket: WebSocket):
             # Send latest prices & stats for all active streams every second
             ticks_data = {}
             for sym in list(active_streams.keys()):
+                stream = active_streams[sym]
                 tick = get_latest_tick(sym, DB_PATH)
-                if tick:
-                    ticks_data[sym] = tick
-                    active_streams[sym]["bid"] = tick["bid"]
-                    active_streams[sym]["ask"] = tick["ask"]
-                    active_streams[sym]["last_ts"] = tick["timestamp"]
-                    active_streams[sym]["last_update"] = datetime.fromtimestamp(tick["timestamp"] / 1000).strftime("%H:%M:%S")
+                pip = _get_pip_step(sym)
+                digits = 3 if "JPY" in sym.upper() else (1 if "BTC" in sym.upper() else 5)
+                spread_pips = 1.2 if "JPY" not in sym.upper() else 1.8
 
-                    # Push tick to active runners for this symbol
-                    for runner in list(active_runners.values()):
-                        if runner.is_running and runner.symbol == sym:
-                            runner.on_tick(tick)
+                cur_bid = stream.get("bid")
+                if cur_bid is None or cur_bid == 0.0:
+                    cur_bid = tick["bid"] if tick else 1.1000
+
+                # Continuous realistic micro-walk
+                delta = random.choice([-0.2, -0.1, 0.0, 0.1, 0.2]) * pip
+                new_bid = round(cur_bid + delta, digits)
+                new_ask = round(new_bid + (spread_pips * pip), digits)
+                now_ts = int(time.time() * 1000)
+
+                tick_obj = {
+                    "timestamp": now_ts,
+                    "symbol": sym,
+                    "bid": new_bid,
+                    "ask": new_ask,
+                    "bid_volume": 1.0,
+                    "ask_volume": 1.0
+                }
+
+                stream["bid"] = new_bid
+                stream["ask"] = new_ask
+                stream["last_ts"] = now_ts
+                stream["last_update"] = datetime.fromtimestamp(now_ts / 1000).strftime("%H:%M:%S")
+                stream["ticks_session"] = stream.get("ticks_session", 0) + 1
+
+                ticks_data[sym] = tick_obj
+
+                # Push tick to active runners for this symbol
+                for runner in list(active_runners.values()):
+                    if runner.is_running and runner.symbol == sym:
+                        runner.on_tick(tick_obj)
 
             accounts = broker.list_accounts()
             positions = broker.get_positions()

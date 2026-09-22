@@ -1,7 +1,8 @@
-// Nautilus Trading Engine Dashboard Client
+// KronerTrader Platform Dashboard Client
 let ws = null;
 let currentSymbol = "EURUSD";
 let allInstruments = [];
+const streamTickHistory = new Map();
 
 document.addEventListener("DOMContentLoaded", () => {
     initNavigation();
@@ -16,6 +17,10 @@ document.addEventListener("DOMContentLoaded", () => {
     loadMarketStats();
     loadHistoricalCoverage();
     loadLiveStreams();
+
+    window.addEventListener("resize", () => {
+        renderAllSquareCharts();
+    });
 
     // Auto refresh every 5s as fallback
     setInterval(() => {
@@ -38,6 +43,10 @@ function initNavigation() {
 
             // Refresh tab data
             if (target === "accounts-tab") loadAccounts();
+            if (target === "charts-tab") {
+                loadLiveStreams();
+                setTimeout(renderAllSquareCharts, 40);
+            }
             if (target === "active-tab") loadActiveStrategies();
             if (target === "backtest-tab") loadBacktests();
             if (target === "catalog-tab") loadStrategiesCatalog();
@@ -74,6 +83,21 @@ function initWebSocket() {
             }
             if (data.active_streams) {
                 renderLiveStreamsTable(data.active_streams);
+                renderLiveStreamCharts(data.active_streams);
+            }
+            if (data.ticks) {
+                for (const [sym, tick] of Object.entries(data.ticks)) {
+                    if (!streamTickHistory.has(sym)) {
+                        streamTickHistory.set(sym, []);
+                    }
+                    const hist = streamTickHistory.get(sym);
+                    const last = hist[hist.length - 1];
+                    if (!last || last.bid !== tick.bid || last.ask !== tick.ask || last.timestamp !== tick.timestamp) {
+                        hist.push({ bid: parseFloat(tick.bid), ask: parseFloat(tick.ask), timestamp: tick.timestamp });
+                        if (hist.length > 10) hist.shift();
+                        drawSquareChart(sym);
+                    }
+                }
             }
             if (data.download_state && data.download_state.is_running) {
                 updateDownloadProgress(data.download_state);
@@ -138,6 +162,7 @@ async function loadInstruments() {
         const stratSelect = document.getElementById("strategy-symbol");
         const dlSelect = document.getElementById("dl-symbol");
         const streamSelect = document.getElementById("stream-ticker-select");
+        const newAccSymbol = document.getElementById("new-acc-symbol");
 
         if (btSelect) {
             btSelect.innerHTML = optionsHtml;
@@ -154,6 +179,10 @@ async function loadInstruments() {
         if (streamSelect) {
             streamSelect.innerHTML = optionsHtml;
             streamSelect.value = "GBPUSD";
+        }
+        if (newAccSymbol) {
+            newAccSymbol.innerHTML = optionsHtml;
+            newAccSymbol.value = "EURUSD";
         }
     } catch (e) {
         console.error("Error loading instruments:", e);
@@ -224,8 +253,190 @@ async function loadLiveStreams() {
         const res = await fetch("/api/market/live-streams");
         const streams = await res.json();
         renderLiveStreamsTable(streams);
+        renderLiveStreamCharts(streams);
     } catch (e) {
         console.error("Error loading live streams:", e);
+    }
+}
+
+// --- Live Square Charts (Bid / Ask 10-Point Rolling Line Chart) ---
+function renderLiveStreamCharts(streams) {
+    const grid = document.getElementById("stream-charts-grid");
+    if (!grid) return;
+
+    if (!streams || streams.length === 0) {
+        grid.innerHTML = `<div class="card" style="grid-column: 1 / -1;"><p class="text-muted">Jelenleg nincs aktív élő stream közvetítés. Hozz létre egy új demó számlát kiválasztott devizapárokkal, vagy adj hozzá tickert felül!</p></div>`;
+        return;
+    }
+
+    const emptyNotice = grid.querySelector(".card");
+    if (emptyNotice && streams.length > 0) {
+        grid.innerHTML = "";
+    }
+
+    streams.forEach(s => {
+        let card = document.getElementById(`chart-card-${s.symbol}`);
+        if (!card) {
+            const cardHtml = `
+            <div class="square-chart-card" id="chart-card-${s.symbol}">
+                <div class="square-chart-header">
+                    <div class="square-chart-title">
+                        <span>${s.symbol}</span>
+                        <span class="card-tag" style="font-size: 9px; padding: 1px 4px;">LIVE</span>
+                    </div>
+                    <span class="square-chart-spread" id="chart-spread-${s.symbol}">-</span>
+                </div>
+                <div class="square-chart-canvas-wrap">
+                    <canvas id="canvas-${s.symbol}" class="square-canvas"></canvas>
+                </div>
+                <div class="square-chart-footer">
+                    <div>BID: <strong class="val-green" id="chart-bid-${s.symbol}">-</strong></div>
+                    <div>ASK: <strong class="val-red" id="chart-ask-${s.symbol}">-</strong></div>
+                </div>
+            </div>`;
+            grid.insertAdjacentHTML("beforeend", cardHtml);
+        }
+
+        if (!streamTickHistory.has(s.symbol)) {
+            streamTickHistory.set(s.symbol, []);
+        }
+
+        if (s.bid && s.ask) {
+            const hist = streamTickHistory.get(s.symbol);
+            const last = hist[hist.length - 1];
+            if (!last || last.bid !== s.bid || last.ask !== s.ask) {
+                hist.push({ bid: parseFloat(s.bid), ask: parseFloat(s.ask), timestamp: s.last_ts || Date.now() });
+                if (hist.length > 10) hist.shift();
+                drawSquareChart(s.symbol);
+            }
+        }
+    });
+
+    const activeSymbols = new Set(streams.map(s => s.symbol));
+    const currentCards = grid.querySelectorAll(".square-chart-card");
+    currentCards.forEach(c => {
+        const id = c.id.replace("chart-card-", "");
+        if (!activeSymbols.has(id)) {
+            c.remove();
+            streamTickHistory.delete(id);
+        }
+    });
+}
+
+function drawSquareChart(symbol) {
+    const canvas = document.getElementById(`canvas-${symbol}`);
+    if (!canvas) return;
+
+    const wrap = canvas.parentElement;
+    if (!wrap) return;
+
+    const w = wrap.clientWidth;
+    const h = wrap.clientHeight;
+    if (w === 0 || h === 0) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+
+    const ticks = streamTickHistory.get(symbol) || [];
+    if (ticks.length === 0) {
+        ctx.fillStyle = "#8492a6";
+        ctx.font = "11px monospace";
+        ctx.fillText("Adatfolyam inicializálása...", 12, 24);
+        return;
+    }
+
+    let minPrice = Infinity;
+    let maxPrice = -Infinity;
+    ticks.forEach(t => {
+        if (t.bid < minPrice) minPrice = t.bid;
+        if (t.ask > maxPrice) maxPrice = t.ask;
+    });
+
+    if (minPrice === maxPrice || !isFinite(minPrice) || !isFinite(maxPrice)) {
+        minPrice = (ticks[0].bid || 1.0) - 0.0002;
+        maxPrice = (ticks[0].ask || 1.0) + 0.0002;
+    }
+
+    const padPrice = Math.max((maxPrice - minPrice) * 0.15, 0.00005);
+    minPrice -= padPrice;
+    maxPrice += padPrice;
+    const range = maxPrice - minPrice;
+
+    const padX = 12;
+    const padY = 12;
+    const chartW = w - padX * 2;
+    const chartH = h - padY * 2;
+
+    const getY = (val) => padY + chartH - ((val - minPrice) / range) * chartH;
+    const getX = (idx, total) => padX + (idx / Math.max(1, total - 1)) * chartW;
+
+    ctx.strokeStyle = "#202938";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padX, padY + chartH / 2);
+    ctx.lineTo(w - padX, padY + chartH / 2);
+    ctx.stroke();
+
+    // 1. Draw Bid Line (Green)
+    ctx.strokeStyle = "#22c55e";
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ticks.forEach((t, i) => {
+        const x = getX(i, ticks.length);
+        const y = getY(t.bid);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    const lastIdx = ticks.length - 1;
+    const lastX = getX(lastIdx, ticks.length);
+    const lastBidY = getY(ticks[lastIdx].bid);
+    ctx.fillStyle = "#22c55e";
+    ctx.beginPath();
+    ctx.arc(lastX, lastBidY, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2. Draw Ask Line (Red)
+    ctx.strokeStyle = "#ef4444";
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ticks.forEach((t, i) => {
+        const x = getX(i, ticks.length);
+        const y = getY(t.ask);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    const lastAskY = getY(ticks[lastIdx].ask);
+    ctx.fillStyle = "#ef4444";
+    ctx.beginPath();
+    ctx.arc(lastX, lastAskY, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    const lastTick = ticks[lastIdx];
+    const digits = symbol.includes("JPY") ? 3 : (symbol.includes("BTC") ? 1 : 5);
+    const bidEl = document.getElementById(`chart-bid-${symbol}`);
+    const askEl = document.getElementById(`chart-ask-${symbol}`);
+    const spreadEl = document.getElementById(`chart-spread-${symbol}`);
+
+    if (bidEl) bidEl.textContent = lastTick.bid.toFixed(digits);
+    if (askEl) askEl.textContent = lastTick.ask.toFixed(digits);
+    if (spreadEl) {
+        const mult = symbol.includes("JPY") ? 100 : (symbol.includes("BTC") ? 1 : 10000);
+        const spread = ((lastTick.ask - lastTick.bid) * mult).toFixed(1);
+        spreadEl.textContent = `Spread: ${spread} pip`;
+    }
+}
+
+function renderAllSquareCharts() {
+    for (const sym of streamTickHistory.keys()) {
+        drawSquareChart(sym);
     }
 }
 
@@ -318,12 +529,17 @@ async function loadAccounts() {
         grid.innerHTML = accounts.map(acc => {
             const pnlClass = acc.net_pnl >= 0 ? "val-green" : "val-red";
             const pnlSign = acc.net_pnl >= 0 ? "+" : "";
+            const stratBadge = (acc.active_strategies && acc.active_strategies.length > 0)
+                ? `<div style="margin-top: 4px; font-size: 10px; color: var(--accent-green-bright); font-family: var(--font-mono);">● ${acc.active_strategies.map(s => `${s.strategy} (${s.symbol} ${s.timeframe})`).join(", ")}</div>`
+                : '';
+
             return `
             <div class="card">
                 <div class="card-header">
                     <div>
                         <div class="card-title">${acc.name}</div>
                         <span class="ticker-label">ID: ${acc.id} • Tőkeáttétel: 1:${acc.leverage}</span>
+                        ${stratBadge}
                     </div>
                     <span class="card-tag">${acc.currency}</span>
                 </div>
@@ -360,15 +576,40 @@ async function createNewAccount(e) {
     const balance = parseFloat(document.getElementById("new-acc-balance").value);
     const leverage = parseInt(document.getElementById("new-acc-leverage").value);
 
+    // Stream checkboxes
+    const checkboxes = document.querySelectorAll('input[name="stream_pair"]:checked');
+    const stream_symbols = Array.from(checkboxes).map(cb => cb.value);
+
+    // Strategy assignment
+    const strategy_key = document.getElementById("new-acc-strategy") ? document.getElementById("new-acc-strategy").value : null;
+    const strategy_symbol = document.getElementById("new-acc-symbol") ? document.getElementById("new-acc-symbol").value : null;
+    const strategy_timeframe = document.getElementById("new-acc-timeframe") ? document.getElementById("new-acc-timeframe").value : "1m";
+    const strategy_volume = document.getElementById("new-acc-volume") ? parseFloat(document.getElementById("new-acc-volume").value) : 0.1;
+
     try {
         const res = await fetch("/api/accounts", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id, name, initial_balance: balance, leverage })
+            body: JSON.stringify({
+                id,
+                name,
+                initial_balance: balance,
+                leverage,
+                stream_symbols,
+                strategy_key,
+                strategy_symbol,
+                strategy_timeframe,
+                strategy_volume
+            })
         });
         if (res.ok) {
             closeModal("modal-account");
             loadAccounts();
+            loadActiveStrategies();
+            loadLiveStreams();
+            // Switch to live charts tab to immediately see the streams!
+            const chartsTabBtn = document.querySelector('[data-tab="charts-tab"]');
+            if (chartsTabBtn) chartsTabBtn.click();
         } else {
             const err = await res.json();
             alert("Hiba: " + err.detail);
@@ -595,12 +836,14 @@ async function runBacktestForm(e) {
     const symbol = document.getElementById("bt-symbol").value;
     const timeframe = document.getElementById("bt-timeframe").value;
     const cash = parseFloat(document.getElementById("bt-cash").value);
+    const from_date = document.getElementById("bt-from") ? (document.getElementById("bt-from").value || null) : null;
+    const to_date = document.getElementById("bt-to") ? (document.getElementById("bt-to").value || null) : null;
 
     try {
         const res = await fetch("/api/backtests/run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ strategy_key, symbol, timeframe, cash })
+            body: JSON.stringify({ strategy_key, symbol, timeframe, cash, from_date, to_date })
         });
         if (res.ok) {
             const result = await res.json();
@@ -628,12 +871,16 @@ async function loadStrategiesCatalog() {
         const grid = document.getElementById("catalog-grid");
         const btSelect = document.getElementById("bt-strategy");
         const startSelect = document.getElementById("strategy-select");
+        const newAccStrat = document.getElementById("new-acc-strategy");
 
         if (btSelect) {
             btSelect.innerHTML = strategies.map(s => `<option value="${s.key}">${s.name}</option>`).join("");
         }
         if (startSelect) {
             startSelect.innerHTML = strategies.map(s => `<option value="${s.key}">${s.name}</option>`).join("");
+        }
+        if (newAccStrat) {
+            newAccStrat.innerHTML = strategies.map(s => `<option value="${s.key}">${s.name}</option>`).join("");
         }
 
         if (!grid) return;
