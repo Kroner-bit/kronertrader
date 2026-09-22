@@ -1,0 +1,24 @@
+{
+  "name": "nautilus",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nautechsystems/nautilus_trader.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/nautechsystems/nautilus_trader/issues"
+  },
+  "homepage": "https://github.com/nautechsystems/nautilus_trader#readme",
+  "dependencies": {
+    "dukascopy-node": "^1.50.0"
+  }
+}

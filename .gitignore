@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+
+# Node
+node_modules/
+package-lock.json
+
+# Data & Database
+data/*.db
+data/*.db-wal
+data/*.db-shm
+temp_dl/
+.dukascopy-cache/
+
+# Reports
+reports/*.html
+
+# Environment & Secrets
+.env
+.env.*
+
+# Backups & Git backup
+.git_backup/
+*.bak
+
+# IDE
+.idea/
+.vscode/
