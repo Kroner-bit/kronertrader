@@ -20,15 +20,22 @@ if sys.platform == "win32":
         pass
 
 
+import subprocess
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
 
-from core.database import DB_PATH, get_db_connection, get_latest_tick, get_tick_count, get_historical_coverage, delete_symbol_ticks
+from core.database import (
+    DB_PATH, get_db_connection, get_latest_tick, get_tick_count,
+    get_historical_coverage, delete_symbol_ticks, insert_ticks_batch
+)
 from core.paper_broker import PaperBroker
 from core.dukascopy_downloader import download_historical_ticks
-from core.instruments import get_all_instruments, get_instrument_by_symbol
+from core.instruments import (
+    get_all_instruments, get_instrument_by_symbol, get_symbol_spec, REFERENCE_PRICES
+)
 from strategies.loader import get_available_strategies, get_strategy_by_key
 from strategies.live_runner import LiveStrategyRunner
 from backtesting_engine.runner import run_backtest, list_backtest_runs, REPORTS_DIR
@@ -58,10 +65,69 @@ active_streams: Dict[str, Dict[str, Any]] = {
         "last_ts": None,
         "last_update": datetime.now().strftime("%H:%M:%S"),
         "bid": 1.15243,
-        "ask": 1.15246,
+        "ask": 1.15255,
         "ticks_session": 0
     }
 }
+
+def get_or_fetch_initial_tick(symbol: str) -> Dict[str, Any]:
+    """
+    Returns the latest tick for a symbol from SQLite, or on-demand fetches real ticks
+    from Dukascopy via Node script, or falls back to realistic instrument specifications.
+    """
+    s = symbol.upper().strip()
+    spec = get_symbol_spec(s)
+
+    # 1. Check SQLite first
+    tick = get_latest_tick(s, DB_PATH)
+    if tick:
+        # Check if price seems corrupted (e.g. 1.1 legacy fallback for an index/crypto)
+        if not (tick["bid"] < 10.0 and spec["default_price"] > 100.0):
+            return tick
+
+    # 2. Try fetching real recent ticks from Dukascopy via node script
+    script_path = os.path.join(PROJECT_ROOT, "scripts", "get_recent_ticks.js")
+    if os.path.exists(script_path):
+        try:
+            cmd = ["node", script_path, "--symbol", s.lower(), "--minutes", "180"]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=6)
+            if proc.returncode == 0 and proc.stdout.strip():
+                data = json.loads(proc.stdout)
+                if isinstance(data, list) and len(data) > 0:
+                    batch = [
+                        (r[0], s, float(r[2]), float(r[1]), float(r[4]), float(r[3]))
+                        for r in data
+                    ]
+                    insert_ticks_batch(batch, DB_PATH)
+                    last = data[-1]
+                    return {
+                        "timestamp": last[0],
+                        "symbol": s,
+                        "bid": float(last[2]),
+                        "ask": float(last[1]),
+                        "bid_volume": float(last[4]),
+                        "ask_volume": float(last[3])
+                    }
+        except Exception as e:
+            print(f"[MarketData] Live tick fetch failed for {s}: {e}")
+
+    # 3. Fallback to realistic reference price from specification
+    now_ts = int(time.time() * 1000)
+    ref_price = spec["default_price"]
+    digits = spec["digits"]
+    unit = spec["unit"]
+    pip = spec["pip_step"]
+    spread_amt = spec["spread_points"] * (pip if unit == "pip" else 1.0)
+    bid = round(ref_price, digits)
+    ask = round(bid + spread_amt, digits)
+    return {
+        "timestamp": now_ts,
+        "symbol": s,
+        "bid": bid,
+        "ask": ask,
+        "bid_volume": 1.0,
+        "ask_volume": 1.0
+    }
 
 # Background download state
 download_state = {
@@ -164,17 +230,15 @@ async def create_account(req: CreateAccountRequest):
             if sym_clean and sym_clean not in active_streams:
                 meta = get_instrument_by_symbol(sym_clean)
                 name = meta["name"] if meta else sym_clean
-                tick = get_latest_tick(sym_clean, DB_PATH)
-                base_bid = tick["bid"] if tick else 1.1000
-                base_ask = tick["ask"] if tick else 1.1002
+                tick = get_or_fetch_initial_tick(sym_clean)
                 active_streams[sym_clean] = {
                     "symbol": sym_clean,
                     "name": name,
                     "status": "STREAMING",
-                    "last_ts": tick["timestamp"] if tick else int(time.time() * 1000),
+                    "last_ts": tick["timestamp"],
                     "last_update": datetime.now().strftime("%H:%M:%S"),
-                    "bid": base_bid,
-                    "ask": base_ask,
+                    "bid": tick["bid"],
+                    "ask": tick["ask"],
                     "ticks_session": 0
                 }
 
@@ -377,51 +441,48 @@ async def delete_symbol_coverage(symbol: str):
 # --- Multi-Ticker Live Streams Manager ---
 @app.get("/api/market/live-streams")
 async def get_live_streams():
-    # Update latest prices for all active streams from SQLite
+    # Update latest prices for all active streams
     res = []
     for sym, stream in active_streams.items():
-        tick = get_latest_tick(sym, DB_PATH)
-        if tick:
+        spec = get_symbol_spec(sym)
+        cur_bid = stream.get("bid")
+        if cur_bid is None or cur_bid <= 0.0 or (cur_bid < 10.0 and spec["default_price"] > 100.0):
+            tick = get_or_fetch_initial_tick(sym)
             stream["bid"] = tick["bid"]
             stream["ask"] = tick["ask"]
             stream["last_ts"] = tick["timestamp"]
-            stream["last_update"] = datetime.fromtimestamp(tick["timestamp"] / 1000).strftime("%H:%M:%S")
+            stream["last_update"] = datetime.now().strftime("%H:%M:%S")
         res.append(stream)
     return res
 
 @app.post("/api/market/live-streams/start")
 async def start_live_stream(req: StreamActionRequest):
-    sym = req.symbol.upper()
+    sym = req.symbol.upper().strip()
     meta = get_instrument_by_symbol(sym)
     name = meta["name"] if meta else sym
-    tick = get_latest_tick(sym, DB_PATH)
+    tick = get_or_fetch_initial_tick(sym)
 
     active_streams[sym] = {
         "symbol": sym,
         "name": name,
         "status": "STREAMING",
-        "last_ts": tick["timestamp"] if tick else None,
+        "last_ts": tick["timestamp"],
         "last_update": datetime.now().strftime("%H:%M:%S"),
-        "bid": tick["bid"] if tick else 0.0,
-        "ask": tick["ask"] if tick else 0.0,
+        "bid": tick["bid"],
+        "ask": tick["ask"],
         "ticks_session": 0
     }
     return {"status": "started", "symbol": sym}
 
 @app.post("/api/market/live-streams/stop")
 async def stop_live_stream(req: StreamActionRequest):
-    sym = req.symbol.upper()
+    sym = req.symbol.upper().strip()
     if sym in active_streams:
         del active_streams[sym]
     return {"status": "stopped", "symbol": sym}
 
 def _get_pip_step(symbol: str) -> float:
-    s = symbol.upper()
-    if "JPY" in s:
-        return 0.01
-    elif "BTC" in s:
-        return 1.0
-    return 0.0001
+    return get_symbol_spec(symbol)["pip_step"]
 
 # --- Real-time WebSocket Feed ---
 @app.websocket("/ws/live")
@@ -434,19 +495,23 @@ async def websocket_live_endpoint(websocket: WebSocket):
             ticks_data = {}
             for sym in list(active_streams.keys()):
                 stream = active_streams[sym]
-                tick = get_latest_tick(sym, DB_PATH)
-                pip = _get_pip_step(sym)
-                digits = 3 if "JPY" in sym.upper() else (1 if "BTC" in sym.upper() else 5)
-                spread_pips = 1.2 if "JPY" not in sym.upper() else 1.8
+                spec = get_symbol_spec(sym)
+                pip = spec["pip_step"]
+                digits = spec["digits"]
+                unit = spec["unit"]
 
                 cur_bid = stream.get("bid")
-                if cur_bid is None or cur_bid == 0.0:
-                    cur_bid = tick["bid"] if tick else 1.1000
+                if cur_bid is None or cur_bid <= 0.0 or (cur_bid < 10.0 and spec["default_price"] > 100.0):
+                    tick = get_or_fetch_initial_tick(sym)
+                    cur_bid = tick["bid"]
+                    stream["bid"] = cur_bid
+                    stream["ask"] = tick["ask"]
 
                 # Continuous realistic micro-walk
                 delta = random.choice([-0.2, -0.1, 0.0, 0.1, 0.2]) * pip
                 new_bid = round(cur_bid + delta, digits)
-                new_ask = round(new_bid + (spread_pips * pip), digits)
+                spread_amt = spec["spread_points"] * (pip if unit == "pip" else 1.0)
+                new_ask = round(new_bid + spread_amt, digits)
                 now_ts = int(time.time() * 1000)
 
                 tick_obj = {

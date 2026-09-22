@@ -4,6 +4,33 @@ let currentSymbol = "EURUSD";
 let allInstruments = [];
 const streamTickHistory = new Map();
 
+function getSymbolSpec(symbol) {
+    if (!symbol) return { digits: 5, mult: 10000, unit: "pip" };
+    const s = symbol.toUpperCase().trim();
+    if (s.includes("IDX") || s.includes("INDEX")) {
+        return { digits: 2, mult: 1.0, unit: "pt" };
+    }
+    if (s.includes("BTC")) {
+        return { digits: 1, mult: 1.0, unit: "USD" };
+    }
+    if (s.includes("ETH")) {
+        return { digits: 2, mult: 1.0, unit: "USD" };
+    }
+    if (s.includes("XAU") || s.includes("GOLD")) {
+        return { digits: 2, mult: 1.0, unit: "USD" };
+    }
+    if (s.includes("XAG") || s.includes("SILVER")) {
+        return { digits: 3, mult: 1.0, unit: "USD" };
+    }
+    if (s.includes("CMD") || s.includes("OIL") || s.includes("BRENT") || s.includes("LIGHT")) {
+        return { digits: 2, mult: 1.0, unit: "USD" };
+    }
+    if (s.includes("JPY")) {
+        return { digits: 3, mult: 100.0, unit: "pip" };
+    }
+    return { digits: 5, mult: 10000.0, unit: "pip" };
+}
+
 document.addEventListener("DOMContentLoaded", () => {
     initNavigation();
     initWebSocket();
@@ -121,12 +148,13 @@ function updateLiveTicker(tick) {
     const bidEl = document.getElementById("ticker-bid");
     const askEl = document.getElementById("ticker-ask");
     const spreadEl = document.getElementById("ticker-spread");
+    const spec = getSymbolSpec(tick.symbol || "EURUSD");
 
-    if (bidEl) bidEl.textContent = parseFloat(tick.bid).toFixed(5);
-    if (askEl) askEl.textContent = parseFloat(tick.ask).toFixed(5);
+    if (bidEl) bidEl.textContent = parseFloat(tick.bid).toFixed(spec.digits);
+    if (askEl) askEl.textContent = parseFloat(tick.ask).toFixed(spec.digits);
     if (spreadEl) {
-        const spread = ((parseFloat(tick.ask) - parseFloat(tick.bid)) * 10000).toFixed(1);
-        spreadEl.textContent = `${spread} pip`;
+        const spread = ((parseFloat(tick.ask) - parseFloat(tick.bid)) * spec.mult).toFixed(1);
+        spreadEl.textContent = `${spread} ${spec.unit}`;
     }
 }
 
@@ -203,7 +231,8 @@ async function loadHistoricalCoverage() {
         }
 
         tbody.innerHTML = coverage.map(c => {
-            const latestPrice = c.latest_bid ? `${c.latest_bid.toFixed(5)} / ${c.latest_ask.toFixed(5)}` : "-";
+            const spec = getSymbolSpec(c.symbol);
+            const latestPrice = c.latest_bid ? `${c.latest_bid.toFixed(spec.digits)} / ${c.latest_ask.toFixed(spec.digits)}` : "-";
             return `
             <tr>
                 <td><strong>${c.symbol}</strong></td>
@@ -349,6 +378,8 @@ function drawSquareChart(symbol) {
         return;
     }
 
+    const spec = getSymbolSpec(symbol);
+
     let minPrice = Infinity;
     let maxPrice = -Infinity;
     ticks.forEach(t => {
@@ -356,15 +387,16 @@ function drawSquareChart(symbol) {
         if (t.ask > maxPrice) maxPrice = t.ask;
     });
 
+    const minDelta = spec.unit === "pip" ? (spec.digits === 3 ? 0.05 : 0.0005) : (spec.digits <= 2 ? 1.0 : 0.05);
     if (minPrice === maxPrice || !isFinite(minPrice) || !isFinite(maxPrice)) {
-        minPrice = (ticks[0].bid || 1.0) - 0.0002;
-        maxPrice = (ticks[0].ask || 1.0) + 0.0002;
+        minPrice = (ticks[0].bid || 1.0) - minDelta;
+        maxPrice = (ticks[0].ask || 1.0) + minDelta;
     }
 
-    const padPrice = Math.max((maxPrice - minPrice) * 0.15, 0.00005);
+    const padPrice = Math.max((maxPrice - minPrice) * 0.15, minDelta * 0.2);
     minPrice -= padPrice;
     maxPrice += padPrice;
-    const range = maxPrice - minPrice;
+    const range = Math.max(maxPrice - minPrice, 0.00001);
 
     const padX = 12;
     const padY = 12;
@@ -420,17 +452,15 @@ function drawSquareChart(symbol) {
     ctx.fill();
 
     const lastTick = ticks[lastIdx];
-    const digits = symbol.includes("JPY") ? 3 : (symbol.includes("BTC") ? 1 : 5);
     const bidEl = document.getElementById(`chart-bid-${symbol}`);
     const askEl = document.getElementById(`chart-ask-${symbol}`);
     const spreadEl = document.getElementById(`chart-spread-${symbol}`);
 
-    if (bidEl) bidEl.textContent = lastTick.bid.toFixed(digits);
-    if (askEl) askEl.textContent = lastTick.ask.toFixed(digits);
+    if (bidEl) bidEl.textContent = lastTick.bid.toFixed(spec.digits);
+    if (askEl) askEl.textContent = lastTick.ask.toFixed(spec.digits);
     if (spreadEl) {
-        const mult = symbol.includes("JPY") ? 100 : (symbol.includes("BTC") ? 1 : 10000);
-        const spread = ((lastTick.ask - lastTick.bid) * mult).toFixed(1);
-        spreadEl.textContent = `Spread: ${spread} pip`;
+        const spread = ((lastTick.ask - lastTick.bid) * spec.mult).toFixed(1);
+        spreadEl.textContent = `Spread: ${spread} ${spec.unit}`;
     }
 }
 
@@ -450,9 +480,10 @@ function renderLiveStreamsTable(streams) {
     }
 
     tbody.innerHTML = streams.map(s => {
-        const bid = s.bid ? parseFloat(s.bid).toFixed(5) : "-";
-        const ask = s.ask ? parseFloat(s.ask).toFixed(5) : "-";
-        const spread = (s.bid && s.ask) ? ((parseFloat(s.ask) - parseFloat(s.bid)) * 10000).toFixed(1) + " pip" : "-";
+        const spec = getSymbolSpec(s.symbol);
+        const bid = s.bid ? parseFloat(s.bid).toFixed(spec.digits) : "-";
+        const ask = s.ask ? parseFloat(s.ask).toFixed(spec.digits) : "-";
+        const spread = (s.bid && s.ask) ? ((parseFloat(s.ask) - parseFloat(s.bid)) * spec.mult).toFixed(1) + " " + spec.unit : "-";
 
         return `
         <tr>
@@ -715,6 +746,7 @@ async function loadPositions() {
         }
 
         tbody.innerHTML = positions.map(pos => {
+            const spec = getSymbolSpec(pos.symbol);
             const sideClass = pos.side === "BUY" ? "val-green" : "val-red";
             const pnlClass = pos.unrealized_pnl >= 0 ? "val-green" : "val-red";
             const pnlSign = pos.unrealized_pnl >= 0 ? "+" : "";
@@ -723,10 +755,10 @@ async function loadPositions() {
                 <td><span class="card-tag">${pos.symbol}</span></td>
                 <td><strong class="${sideClass}">${pos.side}</strong></td>
                 <td>${pos.volume} lot</td>
-                <td>${pos.open_price.toFixed(5)}</td>
-                <td>${pos.current_price.toFixed(5)}</td>
-                <td>${pos.stop_loss ? pos.stop_loss.toFixed(5) : '-'}</td>
-                <td>${pos.take_profit ? pos.take_profit.toFixed(5) : '-'}</td>
+                <td>${pos.open_price.toFixed(spec.digits)}</td>
+                <td>${pos.current_price.toFixed(spec.digits)}</td>
+                <td>${pos.stop_loss ? pos.stop_loss.toFixed(spec.digits) : '-'}</td>
+                <td>${pos.take_profit ? pos.take_profit.toFixed(spec.digits) : '-'}</td>
                 <td><strong class="${pnlClass}">${pnlSign}$${pos.unrealized_pnl.toFixed(2)}</strong></td>
                 <td>
                     <button class="btn btn-danger btn-sm" onclick="closePosition('${pos.id}')">Zárás</button>
@@ -765,6 +797,7 @@ async function loadTrades() {
         }
 
         tbody.innerHTML = trades.map(t => {
+            const spec = getSymbolSpec(t.symbol);
             const sideClass = t.side === "BUY" ? "val-green" : "val-red";
             const pnlClass = t.pnl >= 0 ? "val-green" : "val-red";
             const pnlSign = t.pnl >= 0 ? "+" : "";
@@ -774,8 +807,8 @@ async function loadTrades() {
                 <td><span class="card-tag">${t.symbol}</span></td>
                 <td><strong class="${sideClass}">${t.side}</strong></td>
                 <td>${t.volume} lot</td>
-                <td>${t.open_price.toFixed(5)}</td>
-                <td>${t.close_price.toFixed(5)}</td>
+                <td>${t.open_price.toFixed(spec.digits)}</td>
+                <td>${t.close_price.toFixed(spec.digits)}</td>
                 <td><strong class="${pnlClass}">${pnlSign}$${t.pnl.toFixed(2)}</strong></td>
                 <td><span class="ticker-label">${t.close_reason || 'MANUAL'}</span></td>
                 <td>${closeTime}</td>
